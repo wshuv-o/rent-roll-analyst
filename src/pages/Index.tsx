@@ -4,7 +4,7 @@ import { ColumnMappingToolbar } from '@/components/ColumnMappingToolbar';
 import { TenantTable } from '@/components/TenantTable';
 import { ActivityLog } from '@/components/ActivityLog';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
-
+  
 const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
