@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
-import type { LogEntry, LogType, TenantObject, ParsingInstruction, AnonymizationMapping, WorkflowStep } from '@/lib/types';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId } from '@/lib/types';
+import { COLUMN_GROUPS } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
 import { anonymizeSheet, detectHeaderRows } from '@/lib/anonymizer';
 import { buildSample } from '@/lib/sample-builder';
@@ -18,6 +19,40 @@ function indexToColLetter(idx: number): string {
   return letter;
 }
 
+function colLetterToIdx(letter: string): number {
+  if (!letter) return -1;
+  const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
+  if (!upper) return -1;
+  let index = 0;
+  for (let i = 0; i < upper.length; i++) {
+    index = index * 26 + (upper.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+// Derive group spans from instruction's column_map
+function deriveGroupSpans(instruction: ParsingInstruction): GroupSpan[] {
+  const spans: GroupSpan[] = [];
+  for (const group of COLUMN_GROUPS) {
+    const indices: number[] = [];
+    for (const field of group.fields) {
+      const letter = instruction.column_map[field];
+      if (letter) {
+        const idx = colLetterToIdx(letter);
+        if (idx >= 0) indices.push(idx);
+      }
+    }
+    if (indices.length > 0) {
+      spans.push({
+        groupId: group.id,
+        startCol: Math.min(...indices),
+        endCol: Math.max(...indices),
+      });
+    }
+  }
+  return spans.sort((a, b) => a.startCol - b.startCol);
+}
+
 export function useRentRollParser() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [tenants, setTenants] = useState<TenantObject[]>([]);
@@ -25,14 +60,21 @@ export function useRentRollParser() {
   const [fileName, setFileName] = useState('');
   const [step, setStep] = useState<WorkflowStep>('upload');
 
-  // Raw sheet data for spreadsheet viewer
   const [sheetData, setSheetData] = useState<(string | number | null)[][]>([]);
   const [headerRows, setHeaderRows] = useState<number[]>([]);
   const [instruction, setInstruction] = useState<ParsingInstruction | null>(null);
+  const [groupSpans, setGroupSpans] = useState<GroupSpan[]>([]);
   const [totalRows, setTotalRows] = useState(0);
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
+
+  // Derive group spans whenever instruction changes
+  useEffect(() => {
+    if (instruction) {
+      setGroupSpans(deriveGroupSpans(instruction));
+    }
+  }, [instruction]);
 
   const addLog = useCallback((type: LogType, message: string, isStreaming = false): string => {
     const id = `log-${++logIdCounter}`;
@@ -48,11 +90,11 @@ export function useRentRollParser() {
     setLogs(prev => prev.map(l => l.id === id ? { ...l, message: l.message + text } : l));
   }, []);
 
-  // Step 1: Load file and show in spreadsheet
   const loadFile = useCallback(async (file: File) => {
     setIsProcessing(true);
     setTenants([]);
     setInstruction(null);
+    setGroupSpans([]);
     setFileName(file.name);
     setStep('analyzing');
 
@@ -76,16 +118,13 @@ export function useRentRollParser() {
     setSheetData(data);
     setTotalRows(rows);
 
-    // Detect headers
     const headerRowIndices = detectHeaderRows(data);
     setHeaderRows(headerRowIndices);
     addLog('system', `${rows} rows loaded. Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
 
-    // Anonymize for AI sample only
     const { anonymized, stats } = anonymizeSheet(data, headerRowIndices);
     addLog('system', `Anonymized sample: ${stats.names} names, ${stats.suites} suite IDs masked.`);
 
-    // Build sample & send to AI
     const { html, contextNote, sampleRanges } = buildSample(anonymized, rows);
     addLog('system', `Sample: ${sampleRanges}. Sending to AI...`);
 
@@ -138,14 +177,40 @@ export function useRentRollParser() {
     setInstruction(instructionJson);
     setStep('confirm');
     setIsProcessing(false);
-    addLog('system', 'Review the highlighted columns. Drag-select columns to reassign, then click "Confirm & Parse".');
+    addLog('system', 'Review the highlighted columns. Drag group edges to adjust, click column headers to assign fields, then "Confirm & Parse".');
   }, [addLog, updateLog, appendToLog]);
 
-  // Column reassignment handler
+  // Handle group span resize (dragging edges)
+  const handleGroupResize = useCallback((groupId: ColumnGroupId, newStartCol: number, newEndCol: number) => {
+    setGroupSpans(prev => {
+      const updated = prev.map(s => s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s);
+      return updated.sort((a, b) => a.startCol - b.startCol);
+    });
+
+    // Update column_map: remove fields for columns no longer in the group, keep existing ones
+    setInstruction(prev => {
+      if (!prev) return prev;
+      const group = COLUMN_GROUPS.find(g => g.id === groupId);
+      if (!group) return prev;
+
+      const newMap = { ...prev.column_map };
+      for (const field of group.fields) {
+        const letter = newMap[field];
+        if (letter) {
+          const idx = colLetterToIdx(letter);
+          if (idx < newStartCol || idx > newEndCol) {
+            (newMap as Record<string, string>)[field] = '';
+          }
+        }
+      }
+      return { ...prev, column_map: newMap };
+    });
+  }, []);
+
+  // Column field assignment
   const handleColumnAssign = useCallback((colIndex: number, field: string) => {
     setInstruction(prev => {
       if (!prev) {
-        // Create a blank instruction
         const blank: ParsingInstruction = {
           header_rows: headerRows,
           data_starts_at_row: (headerRows.length > 0 ? headerRows[headerRows.length - 1] + 2 : 1),
@@ -168,21 +233,17 @@ export function useRentRollParser() {
       }
 
       const newMap = { ...prev.column_map };
-      // Clear any existing assignment for this field
       if (field) {
         // Clear previous column that had this field
         for (const [key, val] of Object.entries(newMap)) {
-          const existingIdx = colLetterToIdx(val);
-          if (existingIdx === colIndex) {
+          if (colLetterToIdx(val) === colIndex) {
             (newMap as Record<string, string>)[key] = '';
           }
         }
         (newMap as Record<string, string>)[field] = indexToColLetter(colIndex);
       } else {
-        // Clearing: find what was assigned to this column
         for (const [key, val] of Object.entries(newMap)) {
-          const existingIdx = colLetterToIdx(val);
-          if (existingIdx === colIndex) {
+          if (colLetterToIdx(val) === colIndex) {
             (newMap as Record<string, string>)[key] = '';
           }
         }
@@ -192,7 +253,6 @@ export function useRentRollParser() {
     });
   }, [headerRows]);
 
-  // Step 2: Confirm and parse
   const confirmAndParse = useCallback(() => {
     if (!instruction) {
       addLog('flag', 'No column mapping defined. Please assign columns first.');
@@ -212,23 +272,21 @@ export function useRentRollParser() {
     setIsProcessing(false);
   }, [instruction, totalRows, addLog]);
 
-  // Re-analyze: go back to upload
   const resetToUpload = useCallback(() => {
     setStep('upload');
     setSheetData([]);
     setInstruction(null);
+    setGroupSpans([]);
     setTenants([]);
     setHeaderRows([]);
     setLogs([]);
   }, []);
 
-  // Re-analyze with same file
   const reAnalyze = useCallback(() => {
-    // Reset to confirm state but trigger new AI analysis
     setInstruction(null);
+    setGroupSpans([]);
     setTenants([]);
     setStep('analyzing');
-    // Re-run the AI part with existing data
     const data = sheetDataRef.current;
     if (data.length === 0) return;
 
@@ -238,18 +296,14 @@ export function useRentRollParser() {
     const { html, contextNote, sampleRanges } = buildSample(anonymized, totalRows);
     addLog('system', `Re-analyzing... Sample: ${sampleRanges}`);
 
-    let instructionJson: ParsingInstruction | null = null;
-
     streamAnalysis(html, contextNote, {
       onSection: (type: LogType) => {
         addLog(type, '', true);
       },
-      onToken: (_type: LogType, token: string) => {
-        // simplified for re-analysis
-      },
+      onToken: (_type: LogType, _token: string) => {},
       onInstruction: (json: string) => {
         try {
-          instructionJson = JSON.parse(json) as ParsingInstruction;
+          const instructionJson = JSON.parse(json) as ParsingInstruction;
           setInstruction(instructionJson);
           addLog('output', `New instruction received. Confidence: ${instructionJson.confidence}.`);
         } catch {
@@ -270,29 +324,9 @@ export function useRentRollParser() {
   }, [totalRows, addLog]);
 
   return {
-    logs,
-    tenants,
-    isProcessing,
-    fileName,
-    step,
-    sheetData,
-    headerRows,
-    instruction,
-    loadFile,
-    handleColumnAssign,
-    confirmAndParse,
-    resetToUpload,
-    reAnalyze,
+    logs, tenants, isProcessing, fileName, step,
+    sheetData, headerRows, instruction, groupSpans,
+    loadFile, handleColumnAssign, handleGroupResize,
+    confirmAndParse, resetToUpload, reAnalyze,
   };
-}
-
-function colLetterToIdx(letter: string): number {
-  if (!letter) return -1;
-  const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
-  if (!upper) return -1;
-  let index = 0;
-  for (let i = 0; i < upper.length; i++) {
-    index = index * 26 + (upper.charCodeAt(i) - 64);
-  }
-  return index - 1;
 }
