@@ -8,19 +8,17 @@ const Index = () => {
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Header */}
-      <div className="shrink-0 border-b border-panel-border px-4 py-2 flex items-center justify-between">
-        <h1 className="font-heading text-base tracking-wide text-foreground">
+      <div className="shrink-0 border-b border-panel-border px-4 py-1.5 flex items-center justify-between">
+        <h1 className="font-heading text-sm tracking-wide text-foreground">
           RENT ROLL PARSER
         </h1>
-        <span className="font-mono text-[11px] text-muted-foreground">
-          v1.0 — glass-box engine
-        </span>
+        <span className="font-mono text-[10px] text-muted-foreground">v1.0</span>
       </div>
 
-      {/* Two-panel layout */}
+      {/* Main layout: Excel dominant, log sidebar */}
       <div className="flex-1 flex min-h-0">
-        {/* Left panel — 40% */}
-        <div className="w-[40%] border-r border-panel-border">
+        {/* Main panel — Excel & output */}
+        <div className="flex-1 min-w-0 border-r border-panel-border">
           <UploadPanel
             onFileSelect={processFile}
             isProcessing={isProcessing}
@@ -29,17 +27,9 @@ const Index = () => {
           />
         </div>
 
-        {/* Right panel — 60% */}
-        <div className="w-[60%]">
+        {/* Right sidebar — compact activity log */}
+        <div className="w-[280px] shrink-0">
           <ActivityLog entries={logs} />
-        </div>
-      </div>
-
-      {/* Min-width guard */}
-      <div className="fixed inset-0 bg-background flex items-center justify-center min-[1200px]:hidden z-50">
-        <div className="text-center font-mono text-sm text-muted-foreground p-8">
-          <p>Rent Roll Parser requires a</p>
-          <p>minimum width of 1200px.</p>
         </div>
       </div>
     </div>

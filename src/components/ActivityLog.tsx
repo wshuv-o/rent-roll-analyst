@@ -25,9 +25,9 @@ export function ActivityLog({ entries }: ActivityLogProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-panel-border">
-        <h2 className="font-heading text-sm uppercase tracking-wider text-muted-foreground">
-          Agent Activity Log
+      <div className="px-2 py-1.5 border-b border-panel-border">
+        <h2 className="font-heading text-[11px] uppercase tracking-wider text-muted-foreground">
+          Activity
         </h2>
       </div>
       <div
@@ -36,11 +36,11 @@ export function ActivityLog({ entries }: ActivityLogProps) {
         className="flex-1 overflow-y-auto"
       >
         {entries.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm font-mono">
-            Waiting for file upload...
+          <div className="flex items-center justify-center h-full text-muted-foreground text-[11px] font-mono">
+            Waiting...
           </div>
         ) : (
-          <div className="py-2">
+          <div className="py-1">
             {entries.map(entry => (
               <LogEntryComponent
                 key={entry.id}
