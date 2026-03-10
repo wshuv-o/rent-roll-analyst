@@ -197,7 +197,7 @@ export function useRentRollParser() {
     // Update column_map:
     // 1. Remove fields outside new range
     // 2. Auto-assign newly included columns to unassigned fields in this group
-    setInstruction(prev => {
+    setInstruction((prev: ParsingInstruction | null) => {
       if (!prev) return prev;
       const group = COLUMN_GROUPS.find(g => g.id === groupId);
       if (!group) return prev;
@@ -237,13 +237,13 @@ export function useRentRollParser() {
         }
       }
 
-      return { ...prev, column_map: newMap };
+      return { ...prev, column_map: newMap as ParsingInstruction['column_map'] };
     });
   }, []);
 
   // Column field assignment via click menu
   const handleColumnAssign = useCallback((colIndex: number, field: string) => {
-    setInstruction(prev => {
+    setInstruction((prev: ParsingInstruction | null) => {
       if (!prev) {
         // No instruction yet — create a blank one
         const blank: ParsingInstruction = {
@@ -287,7 +287,7 @@ export function useRentRollParser() {
       }
 
       // Re-derive group spans from the updated map so colored bands stay in sync
-      const updatedInstruction = { ...prev, column_map: newMap };
+      const updatedInstruction = { ...prev, column_map: newMap as ParsingInstruction['column_map'] };
       setGroupSpans(deriveGroupSpans(updatedInstruction));
 
       return updatedInstruction;
