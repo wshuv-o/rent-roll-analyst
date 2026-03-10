@@ -29,9 +29,8 @@ function getCellValue(row: (string | number | null)[], colIdx: number): string {
 
 /**
  * Group-based parser.
- * 1. Uses suite_id column to detect new tenants
- * 2. For each row, collects all columns within each group span as {label → value}
- * 3. Continuation rows append entries to the current tenant's groups
+ * - Scalar groups: first non-empty values win (lease dates, space, base rent)
+ * - Collection groups: every row with data accumulates (charges, future rent)
  */
 export function parseSheet(
   data: (string | number | null)[][],
@@ -47,9 +46,6 @@ export function parseSheet(
 
   const log = addLog || (() => {});
   log('system', `Parser: start_row=${data_starts_at_row}, suite_col=${cm.suite_id}(${suiteColIdx}), ${data.length} total rows, ${groupSpans.length} groups`);
-
-  console.log('[PARSER] groupSpans:', JSON.stringify(groupSpans));
-  console.log('[PARSER] columnLabels:', JSON.stringify(columnLabels));
 
   const tenants: TenantObject[] = [];
   let current: TenantObject | null = null;
@@ -73,7 +69,7 @@ export function parseSheet(
       (addon_space_patterns.length > 0 && addon_space_patterns.some(p => {
         try { return new RegExp(p, 'i').test(rowStr); } catch { return rowStr.includes(p.toLowerCase()); }
       })))) {
-      collectGroupValues(row, groupSpans, columnLabels, current);
+      collectRow(row, groupSpans, columnLabels, current);
       current.notes += (current.notes ? '; ' : '') + `Add'l space row ${i + 1}`;
       continue;
     }
@@ -88,38 +84,36 @@ export function parseSheet(
         current = {
           suite_id: suiteVal,
           tenant_name: tenantVal,
-          groups: {},
+          scalars: {},
+          collections: {},
           notes: '',
         };
 
-        collectGroupValues(row, groupSpans, columnLabels, current);
+        collectRow(row, groupSpans, columnLabels, current);
         continue;
       }
     }
 
     // CONTINUATION ROW
     if (current) {
-      collectGroupValues(row, groupSpans, columnLabels, current);
+      collectRow(row, groupSpans, columnLabels, current);
     }
   }
 
   if (current) tenants.push(current);
 
   log('system', `${tenants.length} tenant blocks found.`);
-  console.log('[PARSER] Found', tenants.length, 'tenants');
-
   return tenants;
 }
 
-/** Collect all columns within each group span as a {label→value} entry */
-function collectGroupValues(
+/** Collect values from a row into the tenant's scalars/collections based on group type */
+function collectRow(
   row: (string | number | null)[],
   groupSpans: GroupSpan[],
   columnLabels: Record<number, string>,
   tenant: TenantObject
 ) {
   for (const span of groupSpans) {
-    // Skip identity group — suite_id and tenant_name are already top-level
     if (span.groupId === 'identity') continue;
 
     const entry: Record<string, string | number | null> = {};
@@ -133,9 +127,17 @@ function collectGroupValues(
       if (cleaned) hasValue = true;
     }
 
-    if (hasValue) {
-      if (!tenant.groups[span.groupId]) tenant.groups[span.groupId] = [];
-      tenant.groups[span.groupId].push(entry);
+    if (!hasValue) continue;
+
+    if (span.collection) {
+      // Collection group: accumulate every row
+      if (!tenant.collections[span.groupId]) tenant.collections[span.groupId] = [];
+      tenant.collections[span.groupId].push(entry);
+    } else {
+      // Scalar group: only set if not already populated
+      if (!tenant.scalars[span.groupId]) {
+        tenant.scalars[span.groupId] = entry;
+      }
     }
   }
 }
