@@ -287,7 +287,7 @@ export function useRentRollParser() {
       }
 
       // Re-derive group spans from the updated map so colored bands stay in sync
-      const updatedInstruction = { ...prev, column_map: newMap };
+      const updatedInstruction = { ...prev, column_map: newMap as ParsingInstruction['column_map'] };
       setGroupSpans(deriveGroupSpans(updatedInstruction));
 
       return updatedInstruction;
