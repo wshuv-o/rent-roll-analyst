@@ -128,7 +128,7 @@ export function useRentRollParser() {
 
     // Step 5 — Parse full sheet
     addLog('system', `Parsing full sheet... ${totalRows} rows processed.`);
-    const parsedTenants = parseSheet(anonymized, instructionJson);
+    const parsedTenants = parseSheet(anonymized, instructionJson, addLog);
     addLog('system', `${parsedTenants.length} tenant blocks found.`);
 
     // Step 6 — De-anonymization
