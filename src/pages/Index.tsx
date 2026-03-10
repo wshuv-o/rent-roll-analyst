@@ -10,7 +10,7 @@ const Index = () => {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
     columnAliases,
-    loadFile, handleColumnAssign, handleGroupResize,
+    loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename,
     confirmAndParse, resetToUpload, reAnalyze,
   } = useRentRollParser();
@@ -64,6 +64,7 @@ const Index = () => {
                   groupSpans={groupSpans}
                   columnAliases={columnAliases}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
+                  onCustomFieldAssign={step === 'confirm' ? handleCustomFieldAssign : undefined}
                   onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
                   onColumnRename={step === 'confirm' ? handleColumnRename : undefined}
                 />

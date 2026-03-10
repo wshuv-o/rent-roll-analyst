@@ -38,6 +38,8 @@ export interface ParsingInstruction {
   addon_space_patterns: string[];
   confidence: 'high' | 'medium' | 'low';
   notes: string;
+  // User-defined custom columns: fieldName → column letter
+  custom_columns?: Record<string, string>;
 }
 
 export interface RecurringCharge {
@@ -63,6 +65,8 @@ export interface TenantObject {
   recurring_charges: RecurringCharge[];
   future_rent_increases: FutureRentIncrease[];
   notes: string;
+  // User-defined custom fields: fieldName → string value
+  custom_fields?: Record<string, string>;
 }
 
 // Column group definitions for visual mapping

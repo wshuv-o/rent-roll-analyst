@@ -9,6 +9,7 @@ interface SpreadsheetViewerProps {
   groupSpans: GroupSpan[];
   columnAliases?: Record<number, string>;
   onColumnAssign?: (colIndex: number, field: string) => void;
+  onCustomFieldAssign?: (colIndex: number, fieldName: string) => void;
   onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
   onColumnRename?: (colIndex: number, name: string) => void;
 }
@@ -53,11 +54,13 @@ export function SpreadsheetViewer({
   groupSpans,
   columnAliases = {},
   onColumnAssign,
+  onCustomFieldAssign,
   onGroupResize,
   onColumnRename,
 }: SpreadsheetViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
+  const [customFieldInput, setCustomFieldInput] = useState('');
 
   // Drag-resize state
   const [resizing, setResizing] = useState<{
@@ -71,9 +74,9 @@ export function SpreadsheetViewer({
   const maxCols = useMemo(() => data.reduce((max, row) => Math.max(max, row.length), 0), [data]);
   const visibleRows = useMemo(() => Math.min(data.length, 200), [data]);
 
-  // Build column → group + field mapping
+  // Build column → group + field mapping (includes custom columns)
   const colFieldMap = useMemo(() => {
-    const map = new Map<number, { groupId: ColumnGroupId; field: string; fieldLabel: string }>();
+    const map = new Map<number, { groupId: ColumnGroupId | 'custom'; field: string; fieldLabel: string }>();
     if (!instruction) return map;
     for (const group of COLUMN_GROUPS) {
       for (const field of group.fields) {
@@ -82,6 +85,17 @@ export function SpreadsheetViewer({
           const idx = colLetterToIndex(letter);
           if (idx >= 0) {
             map.set(idx, { groupId: group.id, field, fieldLabel: group.fieldLabels[field] || field });
+          }
+        }
+      }
+    }
+    // Custom columns
+    if (instruction.custom_columns) {
+      for (const [fieldName, letter] of Object.entries(instruction.custom_columns)) {
+        if (letter) {
+          const idx = colLetterToIndex(letter);
+          if (idx >= 0) {
+            map.set(idx, { groupId: 'custom', field: fieldName, fieldLabel: fieldName });
           }
         }
       }
@@ -310,7 +324,7 @@ export function SpreadsheetViewer({
 
                       {/* Field label from column_map */}
                       {fieldInfo && (
-                        <div className={`text-[9px] ${GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
+                        <div className={`text-[9px] ${fieldInfo.groupId === 'custom' ? 'text-accent-foreground' : GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
                           {fieldInfo.fieldLabel}
                         </div>
                       )}
@@ -390,6 +404,63 @@ export function SpreadsheetViewer({
               ))}
             </div>
           ))}
+
+          {/* Existing custom fields */}
+          {instruction?.custom_columns && Object.keys(instruction.custom_columns).length > 0 && (
+            <div className="border-t border-panel-border mt-1">
+              <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-heading uppercase tracking-wider text-accent-foreground">
+                Custom Fields
+              </div>
+              {Object.keys(instruction.custom_columns).map(fieldName => (
+                <button
+                  key={fieldName}
+                  className="w-full text-left px-3 py-1 text-[11px] font-mono text-foreground/80 hover:bg-muted transition-colors"
+                  onClick={() => {
+                    if (onCustomFieldAssign) onCustomFieldAssign(assignMenuCol.colIndex, fieldName);
+                    setAssignMenuCol(null);
+                  }}
+                >
+                  {fieldName}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Add new custom field */}
+          <div className="border-t border-panel-border mt-1 px-2 py-1.5">
+            <div className="text-[9px] font-heading uppercase tracking-wider text-muted-foreground mb-1">
+              Add Custom Field
+            </div>
+            <form
+              className="flex gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const name = customFieldInput.trim();
+                if (name && onCustomFieldAssign) {
+                  onCustomFieldAssign(assignMenuCol.colIndex, name);
+                  setCustomFieldInput('');
+                  setAssignMenuCol(null);
+                }
+              }}
+            >
+              <input
+                type="text"
+                value={customFieldInput}
+                onChange={(e) => setCustomFieldInput(e.target.value)}
+                placeholder="e.g. code, status..."
+                className="flex-1 px-1.5 py-0.5 text-[11px] font-mono bg-muted border border-panel-border rounded-sm outline-none focus:ring-1 focus:ring-foreground/20"
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button
+                type="submit"
+                className="px-2 py-0.5 text-[10px] font-mono bg-accent text-accent-foreground rounded-sm hover:opacity-90"
+              >
+                Add
+              </button>
+            </form>
+          </div>
+
           <div className="border-t border-panel-border mt-1">
             <button
               className="w-full text-left px-3 py-1 text-[11px] font-mono text-destructive hover:bg-muted transition-colors"

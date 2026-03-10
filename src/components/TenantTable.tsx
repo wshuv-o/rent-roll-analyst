@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { TenantObject } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
 import { Download } from 'lucide-react';
@@ -8,6 +9,17 @@ interface TenantTableProps {
 }
 
 export function TenantTable({ tenants, fileName }: TenantTableProps) {
+  // Collect all custom field keys across all tenants
+  const customFieldKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const t of tenants) {
+      if (t.custom_fields) {
+        for (const k of Object.keys(t.custom_fields)) keys.add(k);
+      }
+    }
+    return Array.from(keys);
+  }, [tenants]);
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -35,6 +47,9 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
               <th className="text-right p-2 text-muted-foreground font-semibold">Monthly Rent</th>
               <th className="text-right p-2 text-muted-foreground font-semibold">Rent PSF</th>
               <th className="text-left p-2 text-muted-foreground font-semibold">Charges</th>
+              {customFieldKeys.map(k => (
+                <th key={k} className="text-left p-2 text-accent-foreground font-semibold">{k}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -57,6 +72,9 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
                     ? t.recurring_charges.map(rc => rc.code).filter(Boolean).join(', ') || `${t.recurring_charges.length} charge(s)`
                     : '—'}
                 </td>
+                {customFieldKeys.map(k => (
+                  <td key={k} className="p-2">{t.custom_fields?.[k] ?? '—'}</td>
+                ))}
               </tr>
             ))}
           </tbody>

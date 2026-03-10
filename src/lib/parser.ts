@@ -39,16 +39,14 @@ export function parseSheet(
   instruction: ParsingInstruction,
   addLog?: (type: 'system' | 'flag', msg: string) => void
 ): TenantObject[] {
-  const { column_map: cm, data_starts_at_row, skip_row_patterns, addon_space_patterns } = instruction;
-  const startRow = (data_starts_at_row ?? 1) - 1; // Convert 1-indexed to 0-indexed
+  const { column_map: cm, data_starts_at_row, skip_row_patterns, addon_space_patterns, custom_columns } = instruction;
+  const startRow = (data_starts_at_row ?? 1) - 1;
 
   const log = addLog || (() => {});
 
-  // Debug: log the full instruction
   console.log('[PARSER] Instruction received:', JSON.stringify(instruction, null, 2));
   console.log('[PARSER] Data has', data.length, 'rows. Starting at row', startRow, '(0-indexed)');
   
-  // Debug: log first few data rows to verify column mapping
   for (let d = startRow; d < Math.min(startRow + 5, data.length); d++) {
     const row = data[d];
     if (row) {
@@ -71,7 +69,6 @@ export function parseSheet(
 
     const rowStr = row.map(c => String(c || '')).join(' ').toLowerCase();
 
-    // Skip patterns (totals, summary rows)
     if (skip_row_patterns.length > 0 && skip_row_patterns.some(p => {
       try { return new RegExp(p, 'i').test(rowStr); } catch { return rowStr.includes(p.toLowerCase()); }
     })) continue;
@@ -79,7 +76,7 @@ export function parseSheet(
     const suiteVal = getCellValue(row, cm.suite_id);
     const tenantVal = getCellValue(row, cm.tenant_name);
 
-    // Addon space — merge into current tenant
+    // Addon space
     if (current && (rowStr.includes("add'l space") || rowStr.includes('addl space') || rowStr.includes('additional space') ||
       (addon_space_patterns.length > 0 && addon_space_patterns.some(p => {
         try { return new RegExp(p, 'i').test(rowStr); } catch { return rowStr.includes(p.toLowerCase()); }
@@ -92,13 +89,11 @@ export function parseSheet(
       continue;
     }
 
-    // NEW TENANT: suite_id column has a value
+    // NEW TENANT
     if (suiteVal) {
-      // Skip PSF/summary indicator rows
       if (tenantVal.toLowerCase().startsWith('psf') || tenantVal.startsWith('(')) {
-        // This is a sub-line like "PSF (Incl Addl SF)" — treat as continuation
+        // sub-line — treat as continuation
       } else {
-        // Push previous tenant
         if (current) tenants.push(current);
 
         current = {
@@ -112,17 +107,36 @@ export function parseSheet(
           recurring_charges: [],
           future_rent_increases: [],
           notes: '',
+          custom_fields: {},
         };
 
-        // Collect charges on same row
+        // Extract custom columns on the primary row
+        if (custom_columns) {
+          for (const [fieldName, colLetter] of Object.entries(custom_columns)) {
+            if (colLetter) {
+              const val = getCellValue(row, colLetter);
+              if (val) current.custom_fields![fieldName] = val;
+            }
+          }
+        }
+
         collectCharges(row, cm, current);
         continue;
       }
     }
 
-    // CONTINUATION ROW — attach to current tenant
+    // CONTINUATION ROW
     if (current) {
       collectCharges(row, cm, current);
+      // Also collect custom column values from continuation rows (append if not already set)
+      if (custom_columns) {
+        for (const [fieldName, colLetter] of Object.entries(custom_columns)) {
+          if (colLetter && !current.custom_fields?.[fieldName]) {
+            const val = getCellValue(row, colLetter);
+            if (val) current.custom_fields![fieldName] = val;
+          }
+        }
+      }
     }
   }
 
