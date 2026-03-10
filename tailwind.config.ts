@@ -13,6 +13,10 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        mono: ['"IBM Plex Mono"', 'monospace'],
+        heading: ['"IBM Plex Sans Condensed"', 'sans-serif'],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -57,6 +61,17 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        log: {
+          system: "hsl(var(--log-system))",
+          thinking: "hsl(var(--log-thinking))",
+          grouping: "hsl(var(--log-grouping))",
+          output: "hsl(var(--log-output))",
+          flag: "hsl(var(--log-flag))",
+        },
+        panel: {
+          border: "hsl(var(--panel-border))",
+          bg: "hsl(var(--panel-bg))",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -65,20 +80,12 @@ export default {
       },
       keyframes: {
         "accordion-down": {
-          from: {
-            height: "0",
-          },
-          to: {
-            height: "var(--radix-accordion-content-height)",
-          },
+          from: { height: "0" },
+          to: { height: "var(--radix-accordion-content-height)" },
         },
         "accordion-up": {
-          from: {
-            height: "var(--radix-accordion-content-height)",
-          },
-          to: {
-            height: "0",
-          },
+          from: { height: "var(--radix-accordion-content-height)" },
+          to: { height: "0" },
         },
       },
       animation: {
