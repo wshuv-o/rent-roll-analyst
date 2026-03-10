@@ -9,6 +9,7 @@ interface SpreadsheetViewerProps {
   groupSpans: GroupSpan[];
   columnAliases?: Record<number, string>;
   onColumnAssign?: (colIndex: number, field: string) => void;
+  onCustomFieldAssign?: (colIndex: number, fieldName: string) => void;
   onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
   onColumnRename?: (colIndex: number, name: string) => void;
 }
