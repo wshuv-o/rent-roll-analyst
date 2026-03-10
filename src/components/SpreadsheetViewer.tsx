@@ -253,7 +253,7 @@ export function SpreadsheetViewer({
           )}
 
           {/* Table */}
-          <table className="border-collapse text-[11px] font-mono w-full">
+          <table className="border-collapse text-[11px] font-mono" style={{ tableLayout: 'fixed', width: `${maxCols * COL_WIDTH + ROW_NUM_WIDTH}px` }}>
             <thead className="sticky z-20" style={{ top: liveSpans.length > 0 ? '28px' : '0px' }}>
               <tr className="bg-card">
                 <th className="w-[40px] min-w-[40px] p-0 border-r border-b border-panel-border bg-card sticky left-0 z-30" />
