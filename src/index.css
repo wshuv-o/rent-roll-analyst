@@ -47,6 +47,21 @@
     --panel-border: 218 18% 24%;
     --panel-bg: 222 22% 11%;
 
+    /* Column group colors */
+    --group-identity: 210 100% 60%;
+    --group-identity-bg: 210 100% 60% / 0.08;
+    --group-lease: 280 80% 65%;
+    --group-lease-bg: 280 80% 65% / 0.08;
+    --group-space: 170 70% 50%;
+    --group-space-bg: 170 70% 50% / 0.08;
+    --group-base-rent: 45 100% 60%;
+    --group-base-rent-bg: 45 100% 60% / 0.08;
+    --group-charges: 25 100% 65%;
+    --group-charges-bg: 25 100% 65% / 0.08;
+    --group-future-rent: 145 65% 55%;
+    --group-future-rent-bg: 145 65% 55% / 0.08;
+    --group-header-row: 220 40% 93% / 0.12;
+
     --sidebar-background: 222 25% 8%;
     --sidebar-foreground: 220 40% 93%;
     --sidebar-primary: 220 40% 93%;
