@@ -6,29 +6,17 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const SYSTEM_PROMPT = `You are an expert commercial real estate data analyst specializing in parsing rent roll spreadsheets.
+const SYSTEM_PROMPT = `You are a rent roll spreadsheet parser. Given an anonymized HTML sample of an Excel rent roll, output ONLY a JSON instruction object. Be concise — no lengthy explanations.
 
-You will receive a sample of rows from an Excel rent roll file. The data has been anonymized — tenant names, suite IDs, and amounts have been replaced with placeholder IDs. A mapping exists on the client side to restore real values after you return your output.
-
-Work through the following steps:
+Brief analysis then JSON. Use these sections:
 
 [THINKING]
-Step 1 — Understand the Layout
-Look at the rows. Identify:
-- Which row is the actual header row. Note: headers sometimes span two consecutive rows that must be merged into one label.
-- Which columns map to which fields — build an explicit column map (e.g. Column C = Tenant Name, Column F = Lease Start)
-- What the metadata rows are at the top (report title, date, building name)
-Narrate what you see. Think out loud.
+One-liner per observation: identify header row(s), metadata rows, data start row.
 
-[GROUPING]
-Step 2 — Identify the Tenant Block Pattern
-Explain the rule for where a new tenant starts and where continuation rows appear. Call out summary rows (Total SF, Total PSF) and add-on space rows.
-Narrate this with row-level specifics.
+[GROUPING]  
+One-liner: how new tenants start (e.g. "suite_id column non-empty"), what continuation rows look like, what to skip.
 
 [PARSING INSTRUCTION]
-Step 3 — Produce a Parsing Instruction Object
-Return a JSON object with this exact schema:
-
 \`\`\`json
 {
   "header_rows": [],
@@ -56,11 +44,12 @@ Return a JSON object with this exact schema:
 }
 \`\`\`
 
-[FLAGS]
-Step 4 — Flag Any Issues
-List anything ambiguous, inconsistent, or that an analyst should verify.
+Note: Some columns may be grouped under a shared parent header (e.g. "Base Rent" spanning Monthly and PSF sub-columns). Account for merged/grouped headers when mapping columns.
 
-Structure your response in labeled sections: [THINKING], [GROUPING], [PARSING INSTRUCTION], [FLAGS]`;
+[FLAGS]
+Only list genuine ambiguities. If none, say "None."
+
+IMPORTANT: Keep text minimal. The JSON is what matters.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -72,7 +61,7 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const userMessage = `Here is a sample from an Excel rent roll file:\n\n${contextNote}\n\n${sampleHtml}`;
+    const userMessage = `${contextNote}\n\n${sampleHtml}`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -92,22 +81,19 @@ serve(async (req) => {
 
     if (!response.ok) {
       if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limits exceeded, please try again later." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ error: "Rate limits exceeded" }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Payment required, please add funds to your Lovable AI workspace." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ error: "Payment required" }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const t = await response.text();
       console.error("AI gateway error:", response.status, t);
       return new Response(JSON.stringify({ error: "AI gateway error" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -117,8 +103,7 @@ serve(async (req) => {
   } catch (e) {
     console.error("analyze-rent-roll error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
