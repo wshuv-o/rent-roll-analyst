@@ -64,6 +64,7 @@ const Index = () => {
                   groupSpans={groupSpans}
                   columnAliases={columnAliases}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
+                  onCustomFieldAssign={step === 'confirm' ? handleCustomFieldAssign : undefined}
                   onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
                   onColumnRename={step === 'confirm' ? handleColumnRename : undefined}
                 />

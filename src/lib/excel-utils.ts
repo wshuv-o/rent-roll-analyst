@@ -41,23 +41,36 @@ export function readExcelFile(file: File): Promise<{
 }
 
 export function exportToExcel(tenants: TenantObject[], fileName: string): void {
-  // Flatten tenant objects for Excel
-  const rows = tenants.map(t => ({
-    'Suite ID': t.suite_id,
-    'Tenant Name': t.tenant_name,
-    'Lease Start': t.lease_start,
-    'Lease End': t.lease_end,
-    'GLA (SF)': t.gla_sqft,
-    'Monthly Base Rent': t.monthly_base_rent,
-    'Base Rent PSF': t.base_rent_psf,
-    'Recurring Charges': t.recurring_charges.map(rc =>
-      `${rc.code}: $${rc.amount ?? 'N/A'}`
-    ).join('; '),
-    'Future Rent Increases': t.future_rent_increases.map(fr =>
-      `${fr.effective_date}: $${fr.monthly_amount ?? 'N/A'}`
-    ).join('; '),
-    'Notes': t.notes,
-  }));
+  // Collect all custom field keys
+  const customKeys = new Set<string>();
+  for (const t of tenants) {
+    if (t.custom_fields) {
+      for (const k of Object.keys(t.custom_fields)) customKeys.add(k);
+    }
+  }
+
+  const rows = tenants.map(t => {
+    const base: Record<string, unknown> = {
+      'Suite ID': t.suite_id,
+      'Tenant Name': t.tenant_name,
+      'Lease Start': t.lease_start,
+      'Lease End': t.lease_end,
+      'GLA (SF)': t.gla_sqft,
+      'Monthly Base Rent': t.monthly_base_rent,
+      'Base Rent PSF': t.base_rent_psf,
+      'Recurring Charges': t.recurring_charges.map(rc =>
+        `${rc.code}: $${rc.amount ?? 'N/A'}`
+      ).join('; '),
+      'Future Rent Increases': t.future_rent_increases.map(fr =>
+        `${fr.effective_date}: $${fr.monthly_amount ?? 'N/A'}`
+      ).join('; '),
+      'Notes': t.notes,
+    };
+    for (const k of customKeys) {
+      base[k] = t.custom_fields?.[k] ?? '';
+    }
+    return base;
+  });
 
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
