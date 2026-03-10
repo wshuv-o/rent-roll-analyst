@@ -310,6 +310,27 @@ export function useRentRollParser() {
     });
   }, []);
 
+  // Build column labels from aliases + header row values + column letters
+  const buildColumnLabels = useCallback((): Record<number, string> => {
+    const labels: Record<number, string> = {};
+    const data = sheetDataRef.current;
+    // Use last header row for fallback labels
+    const lastHeaderIdx = headerRows.length > 0 ? headerRows[headerRows.length - 1] : -1;
+    const headerRow = lastHeaderIdx >= 0 && lastHeaderIdx < data.length ? data[lastHeaderIdx] : null;
+
+    const maxCols = data.reduce((max, row) => Math.max(max, row.length), 0);
+    for (let col = 0; col < maxCols; col++) {
+      if (columnAliases[col]) {
+        labels[col] = columnAliases[col];
+      } else if (headerRow && col < headerRow.length && headerRow[col] !== null && headerRow[col] !== undefined) {
+        labels[col] = String(headerRow[col]).trim();
+      } else {
+        labels[col] = indexToColLetter(col);
+      }
+    }
+    return labels;
+  }, [columnAliases, headerRows]);
+
   const confirmAndParse = useCallback(() => {
     if (!instruction) {
       addLog('flag', 'No column mapping defined. Please assign columns first.');
@@ -319,39 +340,17 @@ export function useRentRollParser() {
     setStep('parsing');
     setIsProcessing(true);
 
-    // Auto-promote: columns inside a group span that have an alias but no field assignment → custom_columns
-    const assignedCols = new Set<number>();
-    for (const val of Object.values(instruction.column_map)) {
-      if (val) assignedCols.add(colLetterToIdx(val));
-    }
-    if (instruction.custom_columns) {
-      for (const val of Object.values(instruction.custom_columns)) {
-        if (val) assignedCols.add(colLetterToIdx(val));
-      }
-    }
-
-    const promotedCustom = { ...(instruction.custom_columns || {}) };
-    for (const span of groupSpans) {
-      for (let col = span.startCol; col <= span.endCol; col++) {
-        if (!assignedCols.has(col) && columnAliases[col]) {
-          promotedCustom[columnAliases[col]] = indexToColLetter(col);
-          assignedCols.add(col);
-        }
-      }
-    }
-
-    const finalInstruction = { ...instruction, custom_columns: promotedCustom };
-
-    addLog('system', `Parsing full sheet... ${totalRows} rows.`);
+    addLog('system', `Parsing full sheet... ${totalRows} rows, ${groupSpans.length} groups.`);
 
     const data = sheetDataRef.current;
-    const finalTenants = parseSheet(data, finalInstruction, addLog);
+    const labels = buildColumnLabels();
+    const finalTenants = parseSheet(data, instruction, groupSpans, labels, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
     setTenants(finalTenants);
     setStep('done');
     setIsProcessing(false);
-  }, [instruction, totalRows, addLog, groupSpans, columnAliases]);
+  }, [instruction, totalRows, addLog, groupSpans, buildColumnLabels]);
 
   const resetToUpload = useCallback(() => {
     setStep('upload');

@@ -38,35 +38,7 @@ export interface ParsingInstruction {
   addon_space_patterns: string[];
   confidence: 'high' | 'medium' | 'low';
   notes: string;
-  // User-defined custom columns: fieldName → column letter
   custom_columns?: Record<string, string>;
-}
-
-export interface RecurringCharge {
-  code: string;
-  amount: number | null;
-  psf: number | null;
-}
-
-export interface FutureRentIncrease {
-  effective_date: string;
-  monthly_amount: number | null;
-  psf: number | null;
-}
-
-export interface TenantObject {
-  suite_id: string;
-  tenant_name: string;
-  lease_start: string;
-  lease_end: string;
-  gla_sqft: number | null;
-  monthly_base_rent: number | null;
-  base_rent_psf: number | null;
-  recurring_charges: RecurringCharge[];
-  future_rent_increases: FutureRentIncrease[];
-  notes: string;
-  // User-defined custom fields: fieldName → string value
-  custom_fields?: Record<string, string>;
 }
 
 // Column group definitions for visual mapping
@@ -129,6 +101,20 @@ export interface GroupSpan {
   groupId: ColumnGroupId;
   startCol: number;
   endCol: number;
+}
+
+/**
+ * New simplified TenantObject:
+ * - suite_id & tenant_name stay top-level for identification
+ * - All other data is collected per group as arrays of row entries
+ * - Each row entry is a record of label → value
+ */
+export interface TenantObject {
+  suite_id: string;
+  tenant_name: string;
+  /** groupId → array of collected rows, each row is label→value */
+  groups: Record<string, Record<string, string | number | null>[]>;
+  notes: string;
 }
 
 // Workflow state
