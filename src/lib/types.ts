@@ -55,6 +55,8 @@ export interface ColumnGroup {
   label: string;
   fields: (keyof ParsingInstruction['column_map'])[];
   fieldLabels: Record<string, string>;
+  /** If true, multiple rows accumulate as an array. If false, only first non-empty values kept. */
+  collection: boolean;
 }
 
 export const COLUMN_GROUPS: ColumnGroup[] = [
