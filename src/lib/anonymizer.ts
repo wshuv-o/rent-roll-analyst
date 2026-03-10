@@ -58,7 +58,47 @@ function looksLikeSuiteId(value: string, colHeader?: string): boolean {
   return SUITE_PATTERN.test(trimmed);
 }
 
-export function anonymizeSheet(
+/**
+ * Auto-detect which rows are headers by scanning for header-keyword density.
+ * Returns indices of rows that look like headers (metadata rows + actual column headers).
+ */
+export function detectHeaderRows(data: (string | number | null)[][]): number[] {
+  const headerRows: number[] = [];
+  const scanLimit = Math.min(20, data.length); // Only scan first 20 rows
+
+  for (let i = 0; i < scanLimit; i++) {
+    const row = data[i];
+    if (!row) continue;
+    const nonEmpty = row.filter(c => c !== null && c !== undefined && String(c).trim() !== '');
+    if (nonEmpty.length === 0) continue;
+
+    const headerCells = nonEmpty.filter(c => isHeader(String(c)));
+    const ratio = headerCells.length / nonEmpty.length;
+
+    // If more than 40% of non-empty cells look like headers, it's a header row
+    if (ratio >= 0.4 && headerCells.length >= 2) {
+      headerRows.push(i);
+    }
+  }
+
+  // Also include metadata rows (first few rows before headers that contain report info)
+  if (headerRows.length > 0) {
+    const firstHeader = headerRows[0];
+    for (let i = 0; i < firstHeader; i++) {
+      if (!headerRows.includes(i)) headerRows.push(i);
+    }
+    headerRows.sort((a, b) => a - b);
+  }
+
+  // Fallback: if no headers detected, use first 3 rows
+  if (headerRows.length === 0) {
+    return [0, 1, 2].filter(i => i < data.length);
+  }
+
+  return headerRows;
+}
+
+
   data: (string | number | null)[][],
   headerRowIndices: number[]
 ): { anonymized: (string | number | null)[][]; mapping: AnonymizationMapping; stats: { names: number; suites: number; amounts: number } } {
