@@ -38,6 +38,8 @@ export interface ParsingInstruction {
   addon_space_patterns: string[];
   confidence: 'high' | 'medium' | 'low';
   notes: string;
+  // User-defined custom columns: fieldName → column letter
+  custom_columns?: Record<string, string>;
 }
 
 export interface RecurringCharge {
