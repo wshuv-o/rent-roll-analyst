@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type { LogEntry, LogType, TenantObject, ParsingInstruction, AnonymizationMapping } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
-import { anonymizeSheet, deanonymize } from '@/lib/anonymizer';
+import { anonymizeSheet, deanonymize, detectHeaderRows } from '@/lib/anonymizer';
 import { buildSample } from '@/lib/sample-builder';
 import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
