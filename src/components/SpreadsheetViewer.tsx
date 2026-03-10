@@ -7,8 +7,10 @@ interface SpreadsheetViewerProps {
   instruction: ParsingInstruction | null;
   headerRows: number[];
   groupSpans: GroupSpan[];
+  columnAliases?: Record<number, string>;
   onColumnAssign?: (colIndex: number, field: string) => void;
   onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
+  onColumnRename?: (colIndex: number, name: string) => void;
 }
 
 function colLetterToIndex(letter: string): number {
@@ -44,7 +46,16 @@ const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: st
 const COL_WIDTH = 100;
 const ROW_NUM_WIDTH = 40;
 
-export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, onColumnAssign, onGroupResize }: SpreadsheetViewerProps) {
+export function SpreadsheetViewer({
+  data,
+  instruction,
+  headerRows,
+  groupSpans,
+  columnAliases = {},
+  onColumnAssign,
+  onGroupResize,
+  onColumnRename,
+}: SpreadsheetViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
 
@@ -77,17 +88,6 @@ export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, o
     }
     return map;
   }, [instruction]);
-
-  // Build column → group membership from groupSpans
-  const colGroupMembership = useMemo(() => {
-    const map = new Map<number, ColumnGroupId>();
-    for (const span of groupSpans) {
-      for (let c = span.startCol; c <= span.endCol; c++) {
-        map.set(c, span.groupId);
-      }
-    }
-    return map;
-  }, [groupSpans]);
 
   // Compute live spans during resize
   const liveSpans = useMemo(() => {
@@ -156,6 +156,9 @@ export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, o
   // Column header click → open assign menu
   const handleColHeaderClick = useCallback((colIndex: number, e: React.MouseEvent) => {
     if (!onColumnAssign) return;
+    // Don't open menu if clicking on the editable name area
+    const target = e.target as HTMLElement;
+    if (target.contentEditable === 'true') return;
     e.preventDefault();
     setAssignMenuCol({ colIndex, x: e.clientX, y: e.clientY });
   }, [onColumnAssign]);
@@ -190,7 +193,7 @@ export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, o
       {onColumnAssign && (
         <div className="shrink-0 px-3 py-1.5 bg-muted/50 border-b border-panel-border text-[10px] font-mono text-muted-foreground">
           <span className="text-foreground/70 font-semibold">How to reassign:</span>{' '}
-          Drag the colored group edges ← → to include/exclude columns. Click any column letter to assign a specific field. Right-click a column header to clear its assignment.
+          Drag colored group edges ← → to include/exclude columns. Click column letter to assign a field. Double-click column name to rename. Right-click to clear.
         </div>
       )}
 
@@ -244,6 +247,7 @@ export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, o
                   const groupId = getLiveGroupId(c);
                   const fieldInfo = colFieldMap.get(c);
                   const colors = groupId ? GROUP_COLORS[groupId] : null;
+                  const alias = columnAliases[c];
                   return (
                     <th
                       key={c}
@@ -258,7 +262,53 @@ export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, o
                         onColumnAssign(c, '');
                       }}
                     >
-                      <div className="text-muted-foreground text-[10px]">{indexToColLetter(c)}</div>
+                      {/* Column letter — click to assign */}
+                      <div className="text-muted-foreground text-[10px]">
+                        {indexToColLetter(c)}
+                      </div>
+
+                      {/* Editable column name alias */}
+                      {onColumnRename && (
+                        <div
+                          contentEditable
+                          suppressContentEditableWarning
+                          spellCheck={false}
+                          title="Double-click to rename column"
+                          className={`text-[9px] outline-none truncate cursor-text rounded px-0.5 hover:bg-foreground/5 focus:bg-foreground/10 focus:ring-1 focus:ring-foreground/20 ${
+                            alias ? 'text-foreground/70' : 'text-muted-foreground/40'
+                          }`}
+                          onFocus={(e) => {
+                            // Select all on focus for easy overwrite
+                            const el = e.currentTarget;
+                            const range = document.createRange();
+                            range.selectNodeContents(el);
+                            const sel = window.getSelection();
+                            sel?.removeAllRanges();
+                            sel?.addRange(range);
+                          }}
+                          onBlur={(e) => {
+                            onColumnRename(c, e.currentTarget.textContent || '');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.currentTarget.blur();
+                            }
+                            if (e.key === 'Escape') {
+                              // Restore previous value on escape
+                              e.currentTarget.textContent = alias || '';
+                              e.currentTarget.blur();
+                            }
+                            // Stop click-to-assign from firing while editing
+                            e.stopPropagation();
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {alias || ''}
+                        </div>
+                      )}
+
+                      {/* Field label from column_map */}
                       {fieldInfo && (
                         <div className={`text-[9px] ${GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
                           {fieldInfo.fieldLabel}

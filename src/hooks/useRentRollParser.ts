@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
@@ -66,15 +66,15 @@ export function useRentRollParser() {
   const [groupSpans, setGroupSpans] = useState<GroupSpan[]>([]);
   const [totalRows, setTotalRows] = useState(0);
 
+  // Column aliases: colIndex → custom display name
+  const [columnAliases, setColumnAliases] = useState<Record<number, string>>({});
+
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
 
-  // Derive group spans whenever instruction changes
-  // useEffect(() => {
-  //   if (instruction) {
-  //     setGroupSpans(deriveGroupSpans(instruction));
-  //   }
-  // }, [instruction]);
+  // NOTE: No useEffect deriving groupSpans from instruction.
+  // groupSpans are set explicitly after AI response or reset.
+  // This prevents drag-resize snapping back.
 
   const addLog = useCallback((type: LogType, message: string, isStreaming = false): string => {
     const id = `log-${++logIdCounter}`;
@@ -95,6 +95,7 @@ export function useRentRollParser() {
     setTenants([]);
     setInstruction(null);
     setGroupSpans([]);
+    setColumnAliases({});
     setFileName(file.name);
     setStep('analyzing');
 
@@ -175,43 +176,76 @@ export function useRentRollParser() {
 
     console.log('[HOOK] AI instruction:', JSON.stringify(instructionJson, null, 2));
     setInstruction(instructionJson);
+    // Set spans explicitly here — NOT via useEffect — to avoid resize snap-back
     setGroupSpans(deriveGroupSpans(instructionJson));
     setStep('confirm');
     setIsProcessing(false);
     addLog('system', 'Review the highlighted columns. Drag group edges to adjust, click column headers to assign fields, then "Confirm & Parse".');
   }, [addLog, updateLog, appendToLog]);
 
-  // Handle group span resize (dragging edges)
+  // Handle group span resize (dragging edges).
+  // Also auto-assigns newly included columns to unassigned fields in that group.
   const handleGroupResize = useCallback((groupId: ColumnGroupId, newStartCol: number, newEndCol: number) => {
+    // Update visual spans immediately
     setGroupSpans(prev => {
-      const updated = prev.map(s => s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s);
+      const updated = prev.map(s =>
+        s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s
+      );
       return updated.sort((a, b) => a.startCol - b.startCol);
     });
 
-    // Update column_map: remove fields for columns no longer in the group, keep existing ones
+    // Update column_map:
+    // 1. Remove fields outside new range
+    // 2. Auto-assign newly included columns to unassigned fields in this group
     setInstruction(prev => {
       if (!prev) return prev;
       const group = COLUMN_GROUPS.find(g => g.id === groupId);
       if (!group) return prev;
 
-      const newMap = { ...prev.column_map };
+      const newMap = { ...prev.column_map } as Record<string, string>;
+
+      // Step 1: Remove fields that fell outside the new range
       for (const field of group.fields) {
-        const letter = newMap[field];
-        if (letter) {
-          const idx = colLetterToIdx(letter);
-          if (idx < newStartCol || idx > newEndCol) {
-            (newMap as Record<string, string>)[field] = '';
-          }
+        const idx = colLetterToIdx(newMap[field] || '');
+        if (idx >= 0 && (idx < newStartCol || idx > newEndCol)) {
+          newMap[field] = '';
         }
       }
+
+      // Step 2: Collect which cols in the new range are already assigned within this group
+      const assignedColsInGroup = new Set(
+        group.fields
+          .map(f => colLetterToIdx(newMap[f] || ''))
+          .filter(i => i >= 0)
+      );
+
+      // Step 3: Find fields in this group that still have no assignment
+      const unassignedFields = group.fields.filter(f => !newMap[f]);
+
+      // Step 4: For each col in new range not yet assigned to anything globally,
+      // bind it to the next unassigned field in this group
+      let fieldCursor = 0;
+      for (let col = newStartCol; col <= newEndCol; col++) {
+        if (fieldCursor >= unassignedFields.length) break;
+        if (assignedColsInGroup.has(col)) continue;
+
+        // Check col isn't assigned to any field across ALL groups
+        const usedGlobally = Object.values(newMap).some(v => colLetterToIdx(v) === col);
+        if (!usedGlobally) {
+          newMap[unassignedFields[fieldCursor]] = indexToColLetter(col);
+          fieldCursor++;
+        }
+      }
+
       return { ...prev, column_map: newMap };
     });
   }, []);
 
-  // Column field assignment
+  // Column field assignment via click menu
   const handleColumnAssign = useCallback((colIndex: number, field: string) => {
     setInstruction(prev => {
       if (!prev) {
+        // No instruction yet — create a blank one
         const blank: ParsingInstruction = {
           header_rows: headerRows,
           data_starts_at_row: (headerRows.length > 0 ? headerRows[headerRows.length - 1] + 2 : 1),
@@ -233,26 +267,45 @@ export function useRentRollParser() {
         return blank;
       }
 
-      const newMap = { ...prev.column_map };
+      const newMap = { ...prev.column_map } as Record<string, string>;
+
       if (field) {
-        // Clear previous column that had this field
-        for (const [key, val] of Object.entries(newMap)) {
-          if (colLetterToIdx(val) === colIndex) {
-            (newMap as Record<string, string>)[key] = '';
+        // Clear any other field that was pointing to this column
+        for (const key of Object.keys(newMap)) {
+          if (colLetterToIdx(newMap[key]) === colIndex) {
+            newMap[key] = '';
           }
         }
-        (newMap as Record<string, string>)[field] = indexToColLetter(colIndex);
+        newMap[field] = indexToColLetter(colIndex);
       } else {
-        for (const [key, val] of Object.entries(newMap)) {
-          if (colLetterToIdx(val) === colIndex) {
-            (newMap as Record<string, string>)[key] = '';
+        // Clear assignment — field is empty string means "unassign this col"
+        for (const key of Object.keys(newMap)) {
+          if (colLetterToIdx(newMap[key]) === colIndex) {
+            newMap[key] = '';
           }
         }
       }
 
-      return { ...prev, column_map: newMap };
+      // Re-derive group spans from the updated map so colored bands stay in sync
+      const updatedInstruction = { ...prev, column_map: newMap };
+      setGroupSpans(deriveGroupSpans(updatedInstruction));
+
+      return updatedInstruction;
     });
   }, [headerRows]);
+
+  // Rename a column header for display (does not affect column_map keys)
+  const handleColumnRename = useCallback((colIndex: number, name: string) => {
+    setColumnAliases(prev => {
+      if (!name.trim()) {
+        // Remove alias if cleared
+        const next = { ...prev };
+        delete next[colIndex];
+        return next;
+      }
+      return { ...prev, [colIndex]: name.trim() };
+    });
+  }, []);
 
   const confirmAndParse = useCallback(() => {
     if (!instruction) {
@@ -281,12 +334,14 @@ export function useRentRollParser() {
     setTenants([]);
     setHeaderRows([]);
     setLogs([]);
+    setColumnAliases({});
   }, []);
 
   const reAnalyze = useCallback(() => {
     setInstruction(null);
     setGroupSpans([]);
     setTenants([]);
+    setColumnAliases({});
     setStep('analyzing');
     const data = sheetDataRef.current;
     if (data.length === 0) return;
@@ -306,6 +361,7 @@ export function useRentRollParser() {
         try {
           const instructionJson = JSON.parse(json) as ParsingInstruction;
           setInstruction(instructionJson);
+          // Set spans explicitly — NOT via useEffect
           setGroupSpans(deriveGroupSpans(instructionJson));
           addLog('output', `New instruction received. Confidence: ${instructionJson.confidence}.`);
         } catch {
@@ -328,7 +384,9 @@ export function useRentRollParser() {
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
+    columnAliases,
     loadFile, handleColumnAssign, handleGroupResize,
+    handleColumnRename,
     confirmAndParse, resetToUpload, reAnalyze,
   };
 }

@@ -59,8 +59,10 @@ const Index = () => {
                   instruction={instruction}
                   headerRows={headerRows}
                   groupSpans={groupSpans}
+                  columnAliases={columnAliases}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
                   onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
+                  onColumnRename={step === 'confirm' ? handleColumnRename : undefined}
                 />
               </div>
               <ColumnMappingToolbar
