@@ -194,9 +194,9 @@ export function useRentRollParser() {
       return updated.sort((a, b) => a.startCol - b.startCol);
     });
 
-    // Update column_map:
-    // 1. Remove fields outside new range
-    // 2. Auto-assign newly included columns to unassigned fields in this group
+    // Shift field assignments to match the new column range.
+    // Strategy: collect existing assigned fields in order, then re-distribute
+    // them across the new range left-to-right, preserving order.
     setInstruction((prev: ParsingInstruction | null) => {
       if (!prev) return prev;
       const group = COLUMN_GROUPS.find(g => g.id === groupId);
@@ -204,36 +204,49 @@ export function useRentRollParser() {
 
       const newMap = { ...prev.column_map } as Record<string, string>;
 
-      // Step 1: Remove fields that fell outside the new range
+      // Gather currently assigned fields in this group, sorted by their current column index
+      const assignedFields: { field: string; colIdx: number }[] = [];
       for (const field of group.fields) {
         const idx = colLetterToIdx(newMap[field] || '');
-        if (idx >= 0 && (idx < newStartCol || idx > newEndCol)) {
-          newMap[field] = '';
+        if (idx >= 0) {
+          assignedFields.push({ field, colIdx: idx });
         }
       }
+      assignedFields.sort((a, b) => a.colIdx - b.colIdx);
 
-      // Step 2: Collect which cols in the new range are already assigned within this group
-      const assignedColsInGroup = new Set(
-        group.fields
-          .map(f => colLetterToIdx(newMap[f] || ''))
-          .filter(i => i >= 0)
-      );
+      if (assignedFields.length === 0) {
+        // No fields assigned yet — auto-assign fields to columns in the new range
+        const newRangeCols: number[] = [];
+        for (let col = newStartCol; col <= newEndCol; col++) {
+          const usedGlobally = Object.entries(newMap).some(([k, v]) => {
+            if (group.fields.includes(k as keyof ParsingInstruction['column_map'])) return false;
+            return colLetterToIdx(v) === col;
+          });
+          if (!usedGlobally) newRangeCols.push(col);
+        }
+        for (let i = 0; i < Math.min(group.fields.length, newRangeCols.length); i++) {
+          newMap[group.fields[i]] = indexToColLetter(newRangeCols[i]);
+        }
+      } else {
+        // Fields already assigned — shift them into the new range.
+        // First, clear all fields in this group
+        for (const field of group.fields) {
+          newMap[field] = '';
+        }
 
-      // Step 3: Find fields in this group that still have no assignment
-      const unassignedFields = group.fields.filter(f => !newMap[f]);
+        // Collect available columns in the new range (not used by other groups)
+        const availableCols: number[] = [];
+        for (let col = newStartCol; col <= newEndCol; col++) {
+          const usedByOtherGroup = Object.entries(newMap).some(([k, v]) => {
+            if (group.fields.includes(k as keyof ParsingInstruction['column_map'])) return false;
+            return colLetterToIdx(v) === col;
+          });
+          if (!usedByOtherGroup) availableCols.push(col);
+        }
 
-      // Step 4: For each col in new range not yet assigned to anything globally,
-      // bind it to the next unassigned field in this group
-      let fieldCursor = 0;
-      for (let col = newStartCol; col <= newEndCol; col++) {
-        if (fieldCursor >= unassignedFields.length) break;
-        if (assignedColsInGroup.has(col)) continue;
-
-        // Check col isn't assigned to any field across ALL groups
-        const usedGlobally = Object.values(newMap).some(v => colLetterToIdx(v) === col);
-        if (!usedGlobally) {
-          newMap[unassignedFields[fieldCursor]] = indexToColLetter(col);
-          fieldCursor++;
+        // Re-assign fields to available columns, preserving left-to-right order
+        for (let i = 0; i < Math.min(assignedFields.length, availableCols.length); i++) {
+          newMap[assignedFields[i].field] = indexToColLetter(availableCols[i]);
         }
       }
 
