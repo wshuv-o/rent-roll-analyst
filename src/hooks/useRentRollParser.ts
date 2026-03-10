@@ -318,10 +318,34 @@ export function useRentRollParser() {
 
     setStep('parsing');
     setIsProcessing(true);
+
+    // Auto-promote: columns inside a group span that have an alias but no field assignment → custom_columns
+    const assignedCols = new Set<number>();
+    for (const val of Object.values(instruction.column_map)) {
+      if (val) assignedCols.add(colLetterToIdx(val));
+    }
+    if (instruction.custom_columns) {
+      for (const val of Object.values(instruction.custom_columns)) {
+        if (val) assignedCols.add(colLetterToIdx(val));
+      }
+    }
+
+    const promotedCustom = { ...(instruction.custom_columns || {}) };
+    for (const span of groupSpans) {
+      for (let col = span.startCol; col <= span.endCol; col++) {
+        if (!assignedCols.has(col) && columnAliases[col]) {
+          promotedCustom[columnAliases[col]] = indexToColLetter(col);
+          assignedCols.add(col);
+        }
+      }
+    }
+
+    const finalInstruction = { ...instruction, custom_columns: promotedCustom };
+
     addLog('system', `Parsing full sheet... ${totalRows} rows.`);
 
     const data = sheetDataRef.current;
-    const finalTenants = parseSheet(data, instruction, addLog);
+    const finalTenants = parseSheet(data, finalInstruction, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
     setTenants(finalTenants);
