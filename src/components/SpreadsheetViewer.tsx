@@ -1,15 +1,16 @@
-import { useRef, useEffect, useMemo, useState, useCallback } from 'react';
-import type { ParsingInstruction, ColumnGroupId, COLUMN_GROUPS as ColumnGroupsType } from '@/lib/types';
+import { useRef, useMemo, useState, useCallback, useEffect } from 'react';
+import type { ParsingInstruction, ColumnGroupId, GroupSpan } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 
 interface SpreadsheetViewerProps {
   data: (string | number | null)[][];
   instruction: ParsingInstruction | null;
   headerRows: number[];
+  groupSpans: GroupSpan[];
   onColumnAssign?: (colIndex: number, field: string) => void;
+  onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
 }
 
-// Map column letter to 0-based index
 function colLetterToIndex(letter: string): number {
   if (!letter) return -1;
   const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
@@ -31,41 +32,45 @@ function indexToColLetter(idx: number): string {
   return letter;
 }
 
-// Group color CSS classes
-const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: string }> = {
-  'identity': { border: 'border-group-identity', bg: 'bg-group-identity-bg', text: 'text-group-identity' },
-  'lease': { border: 'border-group-lease', bg: 'bg-group-lease-bg', text: 'text-group-lease' },
-  'space': { border: 'border-group-space', bg: 'bg-group-space-bg', text: 'text-group-space' },
-  'base-rent': { border: 'border-group-base-rent', bg: 'bg-group-base-rent-bg', text: 'text-group-base-rent' },
-  'charges': { border: 'border-group-charges', bg: 'bg-group-charges-bg', text: 'text-group-charges' },
-  'future-rent': { border: 'border-group-future-rent', bg: 'bg-group-future-rent-bg', text: 'text-group-future-rent' },
+const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: string; hsl: string }> = {
+  'identity':    { border: 'border-group-identity',    bg: 'bg-group-identity-bg',    text: 'text-group-identity',    hsl: 'var(--group-identity)' },
+  'lease':       { border: 'border-group-lease',       bg: 'bg-group-lease-bg',       text: 'text-group-lease',       hsl: 'var(--group-lease)' },
+  'space':       { border: 'border-group-space',       bg: 'bg-group-space-bg',       text: 'text-group-space',       hsl: 'var(--group-space)' },
+  'base-rent':   { border: 'border-group-base-rent',   bg: 'bg-group-base-rent-bg',   text: 'text-group-base-rent',   hsl: 'var(--group-base-rent)' },
+  'charges':     { border: 'border-group-charges',     bg: 'bg-group-charges-bg',     text: 'text-group-charges',     hsl: 'var(--group-charges)' },
+  'future-rent': { border: 'border-group-future-rent', bg: 'bg-group-future-rent-bg', text: 'text-group-future-rent', hsl: 'var(--group-future-rent)' },
 };
 
-export function SpreadsheetViewer({ data, instruction, headerRows, onColumnAssign }: SpreadsheetViewerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dragStart, setDragStart] = useState<number | null>(null);
-  const [dragEnd, setDragEnd] = useState<number | null>(null);
-  const [showAssignMenu, setShowAssignMenu] = useState<{ colIndices: number[]; x: number; y: number } | null>(null);
+const COL_WIDTH = 100;
+const ROW_NUM_WIDTH = 40;
+
+export function SpreadsheetViewer({ data, instruction, headerRows, groupSpans, onColumnAssign, onGroupResize }: SpreadsheetViewerProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
+
+  // Drag-resize state
+  const [resizing, setResizing] = useState<{
+    groupId: ColumnGroupId;
+    edge: 'left' | 'right';
+    originalStart: number;
+    originalEnd: number;
+    currentCol: number;
+  } | null>(null);
 
   const maxCols = useMemo(() => data.reduce((max, row) => Math.max(max, row.length), 0), [data]);
   const visibleRows = useMemo(() => Math.min(data.length, 200), [data]);
 
-  // Build column → group mapping from instruction
-  const colGroupMap = useMemo(() => {
+  // Build column → group + field mapping
+  const colFieldMap = useMemo(() => {
     const map = new Map<number, { groupId: ColumnGroupId; field: string; fieldLabel: string }>();
     if (!instruction) return map;
-
     for (const group of COLUMN_GROUPS) {
       for (const field of group.fields) {
         const letter = instruction.column_map[field];
         if (letter) {
           const idx = colLetterToIndex(letter);
           if (idx >= 0) {
-            map.set(idx, {
-              groupId: group.id,
-              field,
-              fieldLabel: group.fieldLabels[field] || field,
-            });
+            map.set(idx, { groupId: group.id, field, fieldLabel: group.fieldLabels[field] || field });
           }
         }
       }
@@ -73,212 +78,262 @@ export function SpreadsheetViewer({ data, instruction, headerRows, onColumnAssig
     return map;
   }, [instruction]);
 
-  // Build group spans for header border rendering
-  const groupSpans = useMemo(() => {
-    const spans: { groupId: ColumnGroupId; label: string; startCol: number; endCol: number }[] = [];
-    if (!instruction) return spans;
-
-    for (const group of COLUMN_GROUPS) {
-      const indices: number[] = [];
-      for (const field of group.fields) {
-        const letter = instruction.column_map[field];
-        if (letter) {
-          const idx = colLetterToIndex(letter);
-          if (idx >= 0) indices.push(idx);
-        }
-      }
-      if (indices.length > 0) {
-        spans.push({
-          groupId: group.id,
-          label: group.label,
-          startCol: Math.min(...indices),
-          endCol: Math.max(...indices),
-        });
+  // Build column → group membership from groupSpans
+  const colGroupMembership = useMemo(() => {
+    const map = new Map<number, ColumnGroupId>();
+    for (const span of groupSpans) {
+      for (let c = span.startCol; c <= span.endCol; c++) {
+        map.set(c, span.groupId);
       }
     }
-    return spans.sort((a, b) => a.startCol - b.startCol);
-  }, [instruction]);
+    return map;
+  }, [groupSpans]);
+
+  // Compute live spans during resize
+  const liveSpans = useMemo(() => {
+    if (!resizing) return groupSpans;
+    return groupSpans.map(s => {
+      if (s.groupId !== resizing.groupId) return s;
+      if (resizing.edge === 'left') {
+        return { ...s, startCol: Math.min(resizing.currentCol, s.endCol) };
+      } else {
+        return { ...s, endCol: Math.max(resizing.currentCol, s.startCol) };
+      }
+    });
+  }, [groupSpans, resizing]);
 
   const headerRowSet = useMemo(() => new Set(headerRows), [headerRows]);
   const dataStartRow = instruction?.data_starts_at_row ? instruction.data_starts_at_row - 1 : 0;
 
-  // Handle column drag selection
-  const handleColMouseDown = useCallback((colIdx: number, e: React.MouseEvent) => {
+  // Resize drag handlers
+  const handleResizeStart = useCallback((groupId: ColumnGroupId, edge: 'left' | 'right', e: React.MouseEvent) => {
+    if (!onGroupResize) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const span = groupSpans.find(s => s.groupId === groupId);
+    if (!span) return;
+    setResizing({
+      groupId, edge,
+      originalStart: span.startCol,
+      originalEnd: span.endCol,
+      currentCol: edge === 'left' ? span.startCol : span.endCol,
+    });
+  }, [groupSpans, onGroupResize]);
+
+  useEffect(() => {
+    if (!resizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = scrollRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const scrollLeft = container.scrollLeft;
+      const x = e.clientX - rect.left + scrollLeft - ROW_NUM_WIDTH;
+      const col = Math.max(0, Math.min(maxCols - 1, Math.floor(x / COL_WIDTH)));
+      setResizing(prev => prev ? { ...prev, currentCol: col } : null);
+    };
+
+    const handleMouseUp = () => {
+      if (resizing && onGroupResize) {
+        const span = groupSpans.find(s => s.groupId === resizing.groupId);
+        if (span) {
+          const newStart = resizing.edge === 'left' ? Math.min(resizing.currentCol, span.endCol) : span.startCol;
+          const newEnd = resizing.edge === 'right' ? Math.max(resizing.currentCol, span.startCol) : span.endCol;
+          onGroupResize(resizing.groupId, newStart, newEnd);
+        }
+      }
+      setResizing(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [resizing, onGroupResize, groupSpans, maxCols]);
+
+  // Column header click → open assign menu
+  const handleColHeaderClick = useCallback((colIndex: number, e: React.MouseEvent) => {
     if (!onColumnAssign) return;
     e.preventDefault();
-    setDragStart(colIdx);
-    setDragEnd(colIdx);
+    setAssignMenuCol({ colIndex, x: e.clientX, y: e.clientY });
   }, [onColumnAssign]);
 
-  const handleColMouseEnter = useCallback((colIdx: number) => {
-    if (dragStart !== null) {
-      setDragEnd(colIdx);
-    }
-  }, [dragStart]);
-
-  const handleColMouseUp = useCallback((e: React.MouseEvent) => {
-    if (dragStart !== null && dragEnd !== null) {
-      const start = Math.min(dragStart, dragEnd);
-      const end = Math.max(dragStart, dragEnd);
-      const indices = Array.from({ length: end - start + 1 }, (_, i) => start + i);
-      setShowAssignMenu({ colIndices: indices, x: e.clientX, y: e.clientY });
-    }
-    setDragStart(null);
-    setDragEnd(null);
-  }, [dragStart, dragEnd]);
-
-  const isDragSelected = useCallback((colIdx: number) => {
-    if (dragStart === null || dragEnd === null) return false;
-    const start = Math.min(dragStart, dragEnd);
-    const end = Math.max(dragStart, dragEnd);
-    return colIdx >= start && colIdx <= end;
-  }, [dragStart, dragEnd]);
-
-  // Close menu on outside click
+  // Close assign menu on outside click
   useEffect(() => {
-    const handler = () => setShowAssignMenu(null);
-    if (showAssignMenu) {
-      document.addEventListener('click', handler, { once: true });
-    }
+    if (!assignMenuCol) return;
+    const handler = () => setAssignMenuCol(null);
+    document.addEventListener('click', handler, { once: true });
     return () => document.removeEventListener('click', handler);
-  }, [showAssignMenu]);
+  }, [assignMenuCol]);
 
-  const handleAssignField = useCallback((field: string) => {
-    if (!showAssignMenu || !onColumnAssign) return;
-    for (const colIdx of showAssignMenu.colIndices) {
-      onColumnAssign(colIdx, field);
+  const handleFieldAssign = useCallback((field: string) => {
+    if (!assignMenuCol || !onColumnAssign) return;
+    onColumnAssign(assignMenuCol.colIndex, field);
+    setAssignMenuCol(null);
+  }, [assignMenuCol, onColumnAssign]);
+
+  // Get live group membership during resize
+  const getLiveGroupId = useCallback((colIdx: number): ColumnGroupId | undefined => {
+    for (const span of liveSpans) {
+      if (colIdx >= span.startCol && colIdx <= span.endCol) return span.groupId;
     }
-    setShowAssignMenu(null);
-  }, [showAssignMenu, onColumnAssign]);
+    return undefined;
+  }, [liveSpans]);
+
+  const tableWidth = maxCols * COL_WIDTH + ROW_NUM_WIDTH;
 
   return (
     <div className="relative flex flex-col h-full">
-      {/* Group header band */}
-      {groupSpans.length > 0 && (
-        <div className="shrink-0 overflow-x-auto" style={{ marginLeft: '40px' }}>
-          <div className="flex relative h-6" style={{ minWidth: `${maxCols * 100}px` }}>
-            {groupSpans.map(span => (
-              <div
-                key={span.groupId}
-                className={`absolute h-full flex items-center justify-center text-[10px] font-heading uppercase tracking-wider border-t-2 border-l-2 border-r-2 rounded-t-sm ${GROUP_COLORS[span.groupId].border} ${GROUP_COLORS[span.groupId].bg} ${GROUP_COLORS[span.groupId].text}`}
-                style={{
-                  left: `${span.startCol * 100}px`,
-                  width: `${(span.endCol - span.startCol + 1) * 100}px`,
-                }}
-              >
-                {span.label}
-              </div>
-            ))}
-          </div>
+      {/* Instruction banner */}
+      {onColumnAssign && (
+        <div className="shrink-0 px-3 py-1.5 bg-muted/50 border-b border-panel-border text-[10px] font-mono text-muted-foreground">
+          <span className="text-foreground/70 font-semibold">How to reassign:</span>{' '}
+          Drag the colored group edges ← → to include/exclude columns. Click any column letter to assign a specific field. Right-click a column header to clear its assignment.
         </div>
       )}
 
-      {/* Spreadsheet grid */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-auto"
-        onMouseUp={handleColMouseUp}
-      >
-        <table className="border-collapse text-[11px] font-mono" style={{ minWidth: `${maxCols * 100 + 40}px` }}>
-          {/* Column letters header */}
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-card">
-              <th className="w-[40px] min-w-[40px] p-0 border-r border-b border-panel-border bg-card sticky left-0 z-20" />
-              {Array.from({ length: maxCols }, (_, c) => {
-                const groupInfo = colGroupMap.get(c);
-                const selected = isDragSelected(c);
+      {/* Single scroll container for group headers + grid */}
+      <div ref={scrollRef} className="flex-1 overflow-auto" style={{ cursor: resizing ? 'col-resize' : undefined }}>
+        <div style={{ minWidth: `${tableWidth}px` }}>
+          {/* Group header band */}
+          {liveSpans.length > 0 && (
+            <div className="sticky top-0 z-30 flex h-7" style={{ paddingLeft: `${ROW_NUM_WIDTH}px` }}>
+              <div className="relative w-full" style={{ minWidth: `${maxCols * COL_WIDTH}px` }}>
+                {liveSpans.map(span => {
+                  const colors = GROUP_COLORS[span.groupId];
+                  const group = COLUMN_GROUPS.find(g => g.id === span.groupId);
+                  return (
+                    <div
+                      key={span.groupId}
+                      className={`absolute h-full flex items-center justify-center text-[10px] font-heading uppercase tracking-wider border-t-2 border-l-2 border-r-2 rounded-t-sm ${colors.border} ${colors.bg} ${colors.text}`}
+                      style={{
+                        left: `${span.startCol * COL_WIDTH}px`,
+                        width: `${(span.endCol - span.startCol + 1) * COL_WIDTH}px`,
+                      }}
+                    >
+                      {/* Left drag handle */}
+                      {onGroupResize && (
+                        <div
+                          className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-foreground/10 z-10"
+                          onMouseDown={(e) => handleResizeStart(span.groupId, 'left', e)}
+                        />
+                      )}
+                      <span className="pointer-events-none select-none">{group?.label}</span>
+                      {/* Right drag handle */}
+                      {onGroupResize && (
+                        <div
+                          className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-foreground/10 z-10"
+                          onMouseDown={(e) => handleResizeStart(span.groupId, 'right', e)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Table */}
+          <table className="border-collapse text-[11px] font-mono w-full">
+            <thead className="sticky z-20" style={{ top: liveSpans.length > 0 ? '28px' : '0px' }}>
+              <tr className="bg-card">
+                <th className="w-[40px] min-w-[40px] p-0 border-r border-b border-panel-border bg-card sticky left-0 z-30" />
+                {Array.from({ length: maxCols }, (_, c) => {
+                  const groupId = getLiveGroupId(c);
+                  const fieldInfo = colFieldMap.get(c);
+                  const colors = groupId ? GROUP_COLORS[groupId] : null;
+                  return (
+                    <th
+                      key={c}
+                      className={`min-w-[100px] max-w-[180px] p-1 border-r border-b border-panel-border text-center select-none transition-colors ${
+                        colors ? `${colors.bg} border-b-2 ${colors.border}` : 'bg-card'
+                      } ${onColumnAssign ? 'cursor-pointer hover:bg-muted/50' : ''}`}
+                      style={{ width: `${COL_WIDTH}px` }}
+                      onClick={(e) => handleColHeaderClick(c, e)}
+                      onContextMenu={(e) => {
+                        if (!onColumnAssign) return;
+                        e.preventDefault();
+                        onColumnAssign(c, '');
+                      }}
+                    >
+                      <div className="text-muted-foreground text-[10px]">{indexToColLetter(c)}</div>
+                      {fieldInfo && (
+                        <div className={`text-[9px] ${GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
+                          {fieldInfo.fieldLabel}
+                        </div>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+
+            <tbody>
+              {data.slice(0, visibleRows).map((row, rowIdx) => {
+                const isHeader = headerRowSet.has(rowIdx);
+                const isDataStart = rowIdx === dataStartRow;
                 return (
-                  <th
-                    key={c}
-                    className={`min-w-[100px] max-w-[180px] p-1 border-r border-b border-panel-border text-center select-none cursor-crosshair transition-colors ${
-                      selected ? 'bg-muted' : groupInfo ? GROUP_COLORS[groupInfo.groupId].bg : 'bg-card'
-                    } ${groupInfo ? `border-b-2 ${GROUP_COLORS[groupInfo.groupId].border}` : ''}`}
-                    onMouseDown={(e) => handleColMouseDown(c, e)}
-                    onMouseEnter={() => handleColMouseEnter(c)}
+                  <tr
+                    key={rowIdx}
+                    className={`${isHeader ? 'bg-group-header-row' : ''} ${isDataStart ? 'border-t-2 border-t-log-output' : ''}`}
                   >
-                    <div className="text-muted-foreground text-[10px]">{indexToColLetter(c)}</div>
-                    {groupInfo && (
-                      <div className={`text-[9px] ${GROUP_COLORS[groupInfo.groupId].text} truncate`}>
-                        {groupInfo.fieldLabel}
-                      </div>
-                    )}
-                  </th>
+                    <td className="w-[40px] min-w-[40px] px-1 py-0.5 text-right text-[10px] text-muted-foreground border-r border-b border-panel-border bg-card sticky left-0 z-10 select-none">
+                      {rowIdx + 1}
+                    </td>
+                    {Array.from({ length: maxCols }, (_, c) => {
+                      const val = c < row.length ? row[c] : null;
+                      const groupId = getLiveGroupId(c);
+                      const colors = groupId ? GROUP_COLORS[groupId] : null;
+                      return (
+                        <td
+                          key={c}
+                          className={`min-w-[100px] max-w-[180px] px-1.5 py-0.5 border-r border-b border-panel-border/50 truncate ${
+                            colors ? colors.bg : ''
+                          } ${isHeader ? 'font-semibold text-foreground' : 'text-foreground/80'} ${
+                            colors ? `border-l ${colors.border}/30` : ''
+                          }`}
+                          title={val !== null && val !== undefined ? String(val) : ''}
+                        >
+                          {val !== null && val !== undefined ? String(val) : ''}
+                        </td>
+                      );
+                    })}
+                  </tr>
                 );
               })}
-            </tr>
-          </thead>
+            </tbody>
+          </table>
 
-          <tbody>
-            {data.slice(0, visibleRows).map((row, rowIdx) => {
-              const isHeader = headerRowSet.has(rowIdx);
-              const isDataStart = rowIdx === dataStartRow;
-              return (
-                <tr
-                  key={rowIdx}
-                  className={`${isHeader ? 'bg-group-header-row' : ''} ${isDataStart ? 'border-t-2 border-t-log-output' : ''}`}
-                >
-                  {/* Row number */}
-                  <td className="w-[40px] min-w-[40px] px-1 py-0.5 text-right text-[10px] text-muted-foreground border-r border-b border-panel-border bg-card sticky left-0 z-10 select-none">
-                    {rowIdx + 1}
-                  </td>
-                  {Array.from({ length: maxCols }, (_, c) => {
-                    const val = c < row.length ? row[c] : null;
-                    const groupInfo = colGroupMap.get(c);
-                    const selected = isDragSelected(c);
-                    return (
-                      <td
-                        key={c}
-                        className={`min-w-[100px] max-w-[180px] px-1.5 py-0.5 border-r border-b border-panel-border/50 truncate ${
-                          selected ? 'bg-muted' : groupInfo ? GROUP_COLORS[groupInfo.groupId].bg : ''
-                        } ${isHeader ? 'font-semibold text-foreground' : 'text-foreground/80'} ${
-                          groupInfo ? `border-l ${GROUP_COLORS[groupInfo.groupId].border}/30` : ''
-                        }`}
-                        title={val !== null && val !== undefined ? String(val) : ''}
-                      >
-                        {val !== null && val !== undefined ? String(val) : ''}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-
-        {data.length > visibleRows && (
-          <div className="py-2 text-center text-[10px] text-muted-foreground font-mono">
-            Showing {visibleRows} of {data.length} rows
-          </div>
-        )}
+          {data.length > visibleRows && (
+            <div className="py-2 text-center text-[10px] text-muted-foreground font-mono">
+              Showing {visibleRows} of {data.length} rows
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Assign menu (appears after drag-select) */}
-      {showAssignMenu && (
+      {/* Assign menu */}
+      {assignMenuCol && (
         <div
-          className="fixed z-50 bg-card border border-panel-border rounded-sm shadow-lg py-1 min-w-[200px]"
-          style={{ left: showAssignMenu.x, top: showAssignMenu.y }}
+          className="fixed z-50 bg-card border border-panel-border rounded-sm shadow-lg py-1 min-w-[200px] max-h-[400px] overflow-y-auto"
+          style={{ left: assignMenuCol.x, top: assignMenuCol.y }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-2 py-1 text-[10px] text-muted-foreground font-heading uppercase tracking-wider border-b border-panel-border">
-            Assign {showAssignMenu.colIndices.length > 1 ? `Columns ${indexToColLetter(showAssignMenu.colIndices[0])}–${indexToColLetter(showAssignMenu.colIndices[showAssignMenu.colIndices.length - 1])}` : `Column ${indexToColLetter(showAssignMenu.colIndices[0])}`}
+            Assign Column {indexToColLetter(assignMenuCol.colIndex)}
           </div>
           {COLUMN_GROUPS.map(group => (
             <div key={group.id}>
               <div className={`px-2 pt-1.5 pb-0.5 text-[9px] font-heading uppercase tracking-wider ${GROUP_COLORS[group.id].text}`}>
                 {group.label}
               </div>
-              {group.fields.map((field, fi) => (
+              {group.fields.map(field => (
                 <button
                   key={field}
                   className="w-full text-left px-3 py-1 text-[11px] font-mono text-foreground/80 hover:bg-muted transition-colors"
-                  onClick={() => {
-                    // Assign sequentially: first selected col gets first field, etc.
-                    const colIdx = showAssignMenu.colIndices[Math.min(fi, showAssignMenu.colIndices.length - 1)];
-                    onColumnAssign?.(colIdx, field);
-                    if (fi === group.fields.length - 1 || fi === showAssignMenu.colIndices.length - 1) {
-                      setShowAssignMenu(null);
-                    }
-                  }}
+                  onClick={() => handleFieldAssign(field)}
                 >
                   {group.fieldLabels[field]}
                 </button>
@@ -288,12 +343,7 @@ export function SpreadsheetViewer({ data, instruction, headerRows, onColumnAssig
           <div className="border-t border-panel-border mt-1">
             <button
               className="w-full text-left px-3 py-1 text-[11px] font-mono text-destructive hover:bg-muted transition-colors"
-              onClick={() => {
-                for (const colIdx of showAssignMenu.colIndices) {
-                  onColumnAssign?.(colIdx, '');
-                }
-                setShowAssignMenu(null);
-              }}
+              onClick={() => handleFieldAssign('')}
             >
               Clear Assignment
             </button>

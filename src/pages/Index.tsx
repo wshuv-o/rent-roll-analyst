@@ -8,8 +8,8 @@ import { useRentRollParser } from '@/hooks/useRentRollParser';
 const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
-    sheetData, headerRows, instruction,
-    loadFile, handleColumnAssign, confirmAndParse, resetToUpload, reAnalyze,
+    sheetData, headerRows, instruction, groupSpans,
+    loadFile, handleColumnAssign, handleGroupResize, confirmAndParse, resetToUpload, reAnalyze,
   } = useRentRollParser();
 
   return (
@@ -58,7 +58,9 @@ const Index = () => {
                   data={sheetData}
                   instruction={instruction}
                   headerRows={headerRows}
+                  groupSpans={groupSpans}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
+                  onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
                 />
               </div>
               <ColumnMappingToolbar
