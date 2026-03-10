@@ -237,6 +237,16 @@ export function useRentRollParser() {
             newMap[key] = '';
           }
         }
+        // Also clear from custom_columns
+        const newCustom = { ...(prev.custom_columns || {}) };
+        for (const key of Object.keys(newCustom)) {
+          if (colLetterToIdx(newCustom[key]) === colIndex) {
+            delete newCustom[key];
+          }
+        }
+        const updatedInstruction = { ...prev, column_map: newMap as ParsingInstruction['column_map'], custom_columns: newCustom };
+        setGroupSpans(deriveGroupSpans(updatedInstruction));
+        return updatedInstruction;
       }
 
       // Re-derive group spans from the updated map so colored bands stay in sync
@@ -244,6 +254,46 @@ export function useRentRollParser() {
       setGroupSpans(deriveGroupSpans(updatedInstruction));
 
       return updatedInstruction;
+    });
+  }, [headerRows]);
+
+  // Custom field assignment via column menu
+  const handleCustomFieldAssign = useCallback((colIndex: number, fieldName: string) => {
+    setInstruction((prev: ParsingInstruction | null) => {
+      const base = prev || {
+        header_rows: headerRows,
+        data_starts_at_row: (headerRows.length > 0 ? headerRows[headerRows.length - 1] + 2 : 1),
+        column_map: {
+          suite_id: '', tenant_name: '', lease_start: '', lease_end: '',
+          gla_sqft: '', monthly_base_rent: '', base_rent_psf: '',
+          recurring_charge_code: '', recurring_charge_amount: '', recurring_charge_psf: '',
+          future_rent_date: '', future_rent_amount: '', future_rent_psf: '',
+        },
+        new_tenant_rule: 'suite_id column non-empty',
+        skip_row_patterns: [],
+        addon_space_patterns: [],
+        confidence: 'medium' as const,
+        notes: 'Manual assignment',
+        custom_columns: {},
+      };
+
+      const newCustom = { ...(base.custom_columns || {}) };
+      // Clear any existing custom field pointing to this column
+      for (const key of Object.keys(newCustom)) {
+        if (colLetterToIdx(newCustom[key]) === colIndex) {
+          delete newCustom[key];
+        }
+      }
+      // Also clear standard fields pointing to this column
+      const newMap = { ...base.column_map } as Record<string, string>;
+      for (const key of Object.keys(newMap)) {
+        if (colLetterToIdx(newMap[key]) === colIndex) {
+          newMap[key] = '';
+        }
+      }
+      newCustom[fieldName] = indexToColLetter(colIndex);
+
+      return { ...base, column_map: newMap as ParsingInstruction['column_map'], custom_columns: newCustom };
     });
   }, [headerRows]);
 
