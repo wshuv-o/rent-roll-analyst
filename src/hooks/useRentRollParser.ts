@@ -197,7 +197,7 @@ export function useRentRollParser() {
     // Update column_map:
     // 1. Remove fields outside new range
     // 2. Auto-assign newly included columns to unassigned fields in this group
-    setInstruction(prev => {
+    setInstruction((prev: ParsingInstruction | null) => {
       if (!prev) return prev;
       const group = COLUMN_GROUPS.find(g => g.id === groupId);
       if (!group) return prev;
