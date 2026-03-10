@@ -54,6 +54,7 @@ export function SpreadsheetViewer({
   groupSpans,
   columnAliases = {},
   onColumnAssign,
+  onCustomFieldAssign,
   onGroupResize,
   onColumnRename,
 }: SpreadsheetViewerProps) {
