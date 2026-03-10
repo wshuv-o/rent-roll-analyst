@@ -109,6 +109,7 @@ export interface GroupSpan {
   groupId: ColumnGroupId;
   startCol: number;
   endCol: number;
+  collection: boolean;
 }
 
 /**
