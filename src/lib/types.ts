@@ -120,5 +120,12 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
   },
 ];
 
+// Group span: which columns belong to a group (independent of field assignments)
+export interface GroupSpan {
+  groupId: ColumnGroupId;
+  startCol: number;
+  endCol: number;
+}
+
 // Workflow state
 export type WorkflowStep = 'upload' | 'analyzing' | 'confirm' | 'parsing' | 'done';
