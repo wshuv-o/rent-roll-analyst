@@ -2,13 +2,12 @@ import type { ParsingInstruction, TenantObject } from './types';
 
 function colLetterToIndex(letter: string): number {
   if (!letter) return -1;
-  const upper = letter.toUpperCase().trim();
+  // Strip any digits (AI sometimes returns "B6" instead of "B")
+  const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
   if (!upper) return -1;
   let index = 0;
   for (let i = 0; i < upper.length; i++) {
-    const code = upper.charCodeAt(i);
-    if (code < 65 || code > 90) return -1;
-    index = index * 26 + (code - 64);
+    index = index * 26 + (upper.charCodeAt(i) - 64);
   }
   return index - 1;
 }
