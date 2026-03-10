@@ -10,7 +10,7 @@ const Index = () => {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
     columnAliases,
-    loadFile, handleColumnAssign, handleGroupResize,
+    loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename,
     confirmAndParse, resetToUpload, reAnalyze,
   } = useRentRollParser();
