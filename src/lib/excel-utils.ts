@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import type { TenantObject } from './types';
+import { COLUMN_GROUPS } from './types';
 
 export function readExcelFile(file: File): Promise<{
   data: (string | number | null)[][];
@@ -18,7 +19,6 @@ export function readExcelFile(file: File): Promise<{
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
-        // Convert to array of arrays, preserving structure
         const jsonData = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
           header: 1,
           defval: null,
@@ -41,34 +41,43 @@ export function readExcelFile(file: File): Promise<{
 }
 
 export function exportToExcel(tenants: TenantObject[], fileName: string): void {
-  // Collect all custom field keys
-  const customKeys = new Set<string>();
+  // Collect all group ids present
+  const groupIds = new Set<string>();
   for (const t of tenants) {
-    if (t.custom_fields) {
-      for (const k of Object.keys(t.custom_fields)) customKeys.add(k);
-    }
+    for (const gid of Object.keys(t.groups)) groupIds.add(gid);
+  }
+
+  // Order by COLUMN_GROUPS definition
+  const orderedGroups = COLUMN_GROUPS
+    .filter(g => g.id !== 'identity' && groupIds.has(g.id))
+    .map(g => g.id);
+  for (const gid of groupIds) {
+    if (!orderedGroups.includes(gid)) orderedGroups.push(gid);
   }
 
   const rows = tenants.map(t => {
     const base: Record<string, unknown> = {
       'Suite ID': t.suite_id,
       'Tenant Name': t.tenant_name,
-      'Lease Start': t.lease_start,
-      'Lease End': t.lease_end,
-      'GLA (SF)': t.gla_sqft,
-      'Monthly Base Rent': t.monthly_base_rent,
-      'Base Rent PSF': t.base_rent_psf,
-      'Recurring Charges': t.recurring_charges.map(rc =>
-        `${rc.code}: $${rc.amount ?? 'N/A'}`
-      ).join('; '),
-      'Future Rent Increases': t.future_rent_increases.map(fr =>
-        `${fr.effective_date}: $${fr.monthly_amount ?? 'N/A'}`
-      ).join('; '),
-      'Notes': t.notes,
     };
-    for (const k of customKeys) {
-      base[k] = t.custom_fields?.[k] ?? '';
+
+    for (const gid of orderedGroups) {
+      const groupLabel = COLUMN_GROUPS.find(g => g.id === gid)?.label || gid;
+      const entries = t.groups[gid];
+      if (!entries || entries.length === 0) {
+        base[groupLabel] = '';
+        continue;
+      }
+      // Serialize: each entry as "key: val | key: val", entries separated by ";"
+      base[groupLabel] = entries.map(entry =>
+        Object.entries(entry)
+          .filter(([, v]) => v !== null && v !== '')
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(' | ')
+      ).join('; ');
     }
+
+    base['Notes'] = t.notes;
     return base;
   });
 
@@ -76,9 +85,8 @@ export function exportToExcel(tenants: TenantObject[], fileName: string): void {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Parsed Rent Roll');
 
-  // Auto-size columns
   const colWidths = Object.keys(rows[0] || {}).map(key => ({
-    wch: Math.max(key.length, ...rows.map(r => String((r as Record<string, unknown>)[key] || '').length))
+    wch: Math.max(key.length, ...rows.map(r => String((r as Record<string, unknown>)[key] || '').length)).toString().length > 50 ? 50 : Math.max(key.length, ...rows.map(r => String((r as Record<string, unknown>)[key] || '').length))
   }));
   ws['!cols'] = colWidths;
 

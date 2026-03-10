@@ -1,23 +1,52 @@
 import { useMemo } from 'react';
-import type { TenantObject } from '@/lib/types';
+import type { TenantObject, ColumnGroupId } from '@/lib/types';
+import { COLUMN_GROUPS } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
 import { Download } from 'lucide-react';
+
+const GROUP_COLORS: Record<ColumnGroupId, string> = {
+  'identity': 'text-group-identity',
+  'lease': 'text-group-lease',
+  'space': 'text-group-space',
+  'base-rent': 'text-group-base-rent',
+  'charges': 'text-group-charges',
+  'future-rent': 'text-group-future-rent',
+};
 
 interface TenantTableProps {
   tenants: TenantObject[];
   fileName: string;
 }
 
+/** Format a group's collected rows into a readable cell */
+function formatGroupCell(rows: Record<string, string | number | null>[] | undefined): string {
+  if (!rows || rows.length === 0) return '—';
+  return rows.map(entry => {
+    const parts = Object.entries(entry)
+      .filter(([, v]) => v !== null && v !== '')
+      .map(([k, v]) => `${k}: ${v}`);
+    return parts.join(' | ');
+  }).join('; ');
+}
+
 export function TenantTable({ tenants, fileName }: TenantTableProps) {
-  // Collect all custom field keys across all tenants
-  const customFieldKeys = useMemo(() => {
-    const keys = new Set<string>();
+  // Determine which groups are present across all tenants (excluding identity)
+  const presentGroups = useMemo(() => {
+    const groupIds = new Set<string>();
     for (const t of tenants) {
-      if (t.custom_fields) {
-        for (const k of Object.keys(t.custom_fields)) keys.add(k);
+      for (const gid of Object.keys(t.groups)) groupIds.add(gid);
+    }
+    // Order them by COLUMN_GROUPS definition order
+    const ordered = COLUMN_GROUPS
+      .filter(g => g.id !== 'identity' && groupIds.has(g.id))
+      .map(g => g);
+    // Also include any unknown group ids (from custom expansions)
+    for (const gid of groupIds) {
+      if (!ordered.find(g => g.id === gid)) {
+        ordered.push({ id: gid as ColumnGroupId, label: gid, fields: [], fieldLabels: {} });
       }
     }
-    return Array.from(keys);
+    return ordered;
   }, [tenants]);
 
   return (
@@ -41,15 +70,12 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
               <th className="text-left p-2 text-muted-foreground font-semibold">#</th>
               <th className="text-left p-2 text-muted-foreground font-semibold">Suite</th>
               <th className="text-left p-2 text-muted-foreground font-semibold">Tenant</th>
-              <th className="text-left p-2 text-muted-foreground font-semibold">Lease Start</th>
-              <th className="text-left p-2 text-muted-foreground font-semibold">Lease End</th>
-              <th className="text-right p-2 text-muted-foreground font-semibold">GLA (SF)</th>
-              <th className="text-right p-2 text-muted-foreground font-semibold">Monthly Rent</th>
-              <th className="text-right p-2 text-muted-foreground font-semibold">Rent PSF</th>
-              <th className="text-left p-2 text-muted-foreground font-semibold">Charges</th>
-              {customFieldKeys.map(k => (
-                <th key={k} className="text-left p-2 text-accent-foreground font-semibold">{k}</th>
+              {presentGroups.map(g => (
+                <th key={g.id} className={`text-left p-2 font-semibold ${GROUP_COLORS[g.id] || 'text-muted-foreground'}`}>
+                  {g.label}
+                </th>
               ))}
+              <th className="text-left p-2 text-muted-foreground font-semibold">Notes</th>
             </tr>
           </thead>
           <tbody>
@@ -58,23 +84,14 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
                 <td className="p-2 text-muted-foreground">{i + 1}</td>
                 <td className="p-2">{t.suite_id}</td>
                 <td className="p-2">{t.tenant_name}</td>
-                <td className="p-2">{t.lease_start}</td>
-                <td className="p-2">{t.lease_end}</td>
-                <td className="p-2 text-right tabular-nums">{t.gla_sqft?.toLocaleString() ?? '—'}</td>
-                <td className="p-2 text-right tabular-nums">
-                  {t.monthly_base_rent !== null ? `$${t.monthly_base_rent.toLocaleString()}` : '—'}
-                </td>
-                <td className="p-2 text-right tabular-nums">
-                  {t.base_rent_psf !== null ? `$${t.base_rent_psf.toFixed(2)}` : '—'}
-                </td>
-                <td className="p-2 text-muted-foreground">
-                  {t.recurring_charges.length > 0
-                    ? t.recurring_charges.map(rc => rc.code).filter(Boolean).join(', ') || `${t.recurring_charges.length} charge(s)`
-                    : '—'}
-                </td>
-                {customFieldKeys.map(k => (
-                  <td key={k} className="p-2">{t.custom_fields?.[k] ?? '—'}</td>
+                {presentGroups.map(g => (
+                  <td key={g.id} className="p-2 max-w-[300px]">
+                    <div className="whitespace-pre-wrap text-[11px]">
+                      {formatGroupCell(t.groups[g.id])}
+                    </div>
+                  </td>
                 ))}
+                <td className="p-2 text-muted-foreground">{t.notes || '—'}</td>
               </tr>
             ))}
           </tbody>
