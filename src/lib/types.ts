@@ -65,6 +65,8 @@ export interface TenantObject {
   recurring_charges: RecurringCharge[];
   future_rent_increases: FutureRentIncrease[];
   notes: string;
+  // User-defined custom fields: fieldName → string value
+  custom_fields?: Record<string, string>;
 }
 
 // Column group definitions for visual mapping
