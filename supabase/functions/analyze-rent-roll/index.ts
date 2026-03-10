@@ -27,11 +27,13 @@ One-liner: how new tenants start (e.g. "suite_id column non-empty"), what contin
     "lease_start": "",
     "lease_end": "",
     "gla_sqft": "",
+    "code":"",
     "monthly_base_rent": "",
     "base_rent_psf": "",
     "recurring_charge_code": "",
     "recurring_charge_amount": "",
     "recurring_charge_psf": "",
+    "future_rent_code": "",
     "future_rent_date": "",
     "future_rent_amount": "",
     "future_rent_psf": ""
@@ -82,18 +84,21 @@ serve(async (req) => {
     if (!response.ok) {
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: "Rate limits exceeded" }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       if (response.status === 402) {
         return new Response(JSON.stringify({ error: "Payment required" }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const t = await response.text();
       console.error("AI gateway error:", response.status, t);
       return new Response(JSON.stringify({ error: "AI gateway error" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -103,7 +108,8 @@ serve(async (req) => {
   } catch (e) {
     console.error("analyze-rent-roll error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
