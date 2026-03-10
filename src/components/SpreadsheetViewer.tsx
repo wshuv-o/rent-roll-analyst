@@ -60,6 +60,7 @@ export function SpreadsheetViewer({
 }: SpreadsheetViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
+  const [customFieldInput, setCustomFieldInput] = useState('');
 
   // Drag-resize state
   const [resizing, setResizing] = useState<{
