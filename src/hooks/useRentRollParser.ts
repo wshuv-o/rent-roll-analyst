@@ -351,7 +351,7 @@ export function useRentRollParser() {
     setTenants(finalTenants);
     setStep('done');
     setIsProcessing(false);
-  }, [instruction, totalRows, addLog]);
+  }, [instruction, totalRows, addLog, groupSpans, columnAliases]);
 
   const resetToUpload = useCallback(() => {
     setStep('upload');
