@@ -184,73 +184,13 @@ export function useRentRollParser() {
   }, [addLog, updateLog, appendToLog]);
 
   // Handle group span resize (dragging edges).
-  // Also auto-assigns newly included columns to unassigned fields in that group.
+  // Only updates the visual span — does NOT move or reassign column_map fields.
   const handleGroupResize = useCallback((groupId: ColumnGroupId, newStartCol: number, newEndCol: number) => {
-    // Update visual spans immediately
     setGroupSpans(prev => {
       const updated = prev.map(s =>
         s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s
       );
       return updated.sort((a, b) => a.startCol - b.startCol);
-    });
-
-    // Shift field assignments to match the new column range.
-    // Strategy: collect existing assigned fields in order, then re-distribute
-    // them across the new range left-to-right, preserving order.
-    setInstruction((prev: ParsingInstruction | null) => {
-      if (!prev) return prev;
-      const group = COLUMN_GROUPS.find(g => g.id === groupId);
-      if (!group) return prev;
-
-      const newMap = { ...prev.column_map } as Record<string, string>;
-
-      // Gather currently assigned fields in this group, sorted by their current column index
-      const assignedFields: { field: string; colIdx: number }[] = [];
-      for (const field of group.fields) {
-        const idx = colLetterToIdx(newMap[field] || '');
-        if (idx >= 0) {
-          assignedFields.push({ field, colIdx: idx });
-        }
-      }
-      assignedFields.sort((a, b) => a.colIdx - b.colIdx);
-
-      if (assignedFields.length === 0) {
-        // No fields assigned yet — auto-assign fields to columns in the new range
-        const newRangeCols: number[] = [];
-        for (let col = newStartCol; col <= newEndCol; col++) {
-          const usedGlobally = Object.entries(newMap).some(([k, v]) => {
-            if (group.fields.includes(k as keyof ParsingInstruction['column_map'])) return false;
-            return colLetterToIdx(v) === col;
-          });
-          if (!usedGlobally) newRangeCols.push(col);
-        }
-        for (let i = 0; i < Math.min(group.fields.length, newRangeCols.length); i++) {
-          newMap[group.fields[i]] = indexToColLetter(newRangeCols[i]);
-        }
-      } else {
-        // Fields already assigned — shift them into the new range.
-        // First, clear all fields in this group
-        for (const field of group.fields) {
-          newMap[field] = '';
-        }
-
-        // Collect available columns in the new range (not used by other groups)
-        const availableCols: number[] = [];
-        for (let col = newStartCol; col <= newEndCol; col++) {
-          const usedByOtherGroup = Object.entries(newMap).some(([k, v]) => {
-            if (group.fields.includes(k as keyof ParsingInstruction['column_map'])) return false;
-            return colLetterToIdx(v) === col;
-          });
-          if (!usedByOtherGroup) availableCols.push(col);
-        }
-
-        // Re-assign fields to available columns, preserving left-to-right order
-        for (let i = 0; i < Math.min(assignedFields.length, availableCols.length); i++) {
-          newMap[assignedFields[i].field] = indexToColLetter(availableCols[i]);
-        }
-      }
-
-      return { ...prev, column_map: newMap as ParsingInstruction['column_map'] };
     });
   }, []);
 
