@@ -47,6 +47,7 @@ function deriveGroupSpans(instruction: ParsingInstruction): GroupSpan[] {
         groupId: group.id,
         startCol: Math.min(...indices),
         endCol: Math.max(...indices),
+        collection: group.collection,
       });
     }
   }

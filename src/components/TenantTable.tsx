@@ -18,36 +18,40 @@ interface TenantTableProps {
   fileName: string;
 }
 
-/** Format a group's collected rows into a readable cell */
-function formatGroupCell(rows: Record<string, string | number | null>[] | undefined): string {
+function formatScalar(record: Record<string, string | number | null> | undefined): string {
+  if (!record) return '—';
+  const parts = Object.entries(record)
+    .filter(([, v]) => v !== null && v !== '')
+    .map(([k, v]) => `${k}: ${v}`);
+  return parts.length > 0 ? parts.join(' | ') : '—';
+}
+
+function formatCollection(rows: Record<string, string | number | null>[] | undefined): string {
   if (!rows || rows.length === 0) return '—';
   return rows.map(entry => {
     const parts = Object.entries(entry)
       .filter(([, v]) => v !== null && v !== '')
       .map(([k, v]) => `${k}: ${v}`);
     return parts.join(' | ');
-  }).join('; ');
+  }).join('\n');
 }
 
 export function TenantTable({ tenants, fileName }: TenantTableProps) {
-  // Determine which groups are present across all tenants (excluding identity)
-  const presentGroups = useMemo(() => {
-    const groupIds = new Set<string>();
+  // Determine which groups are present (split by scalar/collection)
+  const { scalarGroups, collectionGroups } = useMemo(() => {
+    const scalarIds = new Set<string>();
+    const collectionIds = new Set<string>();
     for (const t of tenants) {
-      for (const gid of Object.keys(t.groups)) groupIds.add(gid);
+      for (const gid of Object.keys(t.scalars)) scalarIds.add(gid);
+      for (const gid of Object.keys(t.collections)) collectionIds.add(gid);
     }
-    // Order them by COLUMN_GROUPS definition order
-    const ordered = COLUMN_GROUPS
-      .filter(g => g.id !== 'identity' && groupIds.has(g.id))
-      .map(g => g);
-    // Also include any unknown group ids (from custom expansions)
-    for (const gid of groupIds) {
-      if (!ordered.find(g => g.id === gid)) {
-        ordered.push({ id: gid as ColumnGroupId, label: gid, fields: [], fieldLabels: {} });
-      }
-    }
-    return ordered;
+    const allGroups = COLUMN_GROUPS.filter(g => g.id !== 'identity');
+    const scalars = allGroups.filter(g => !g.collection && scalarIds.has(g.id));
+    const collections = allGroups.filter(g => g.collection && collectionIds.has(g.id));
+    return { scalarGroups: scalars, collectionGroups: collections };
   }, [tenants]);
+
+  const allDisplayGroups = [...scalarGroups, ...collectionGroups];
 
   return (
     <div className="flex flex-col gap-3">
@@ -70,9 +74,9 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
               <th className="text-left p-2 text-muted-foreground font-semibold">#</th>
               <th className="text-left p-2 text-muted-foreground font-semibold">Suite</th>
               <th className="text-left p-2 text-muted-foreground font-semibold">Tenant</th>
-              {presentGroups.map(g => (
+              {allDisplayGroups.map(g => (
                 <th key={g.id} className={`text-left p-2 font-semibold ${GROUP_COLORS[g.id] || 'text-muted-foreground'}`}>
-                  {g.label}
+                  {g.label}{g.collection ? ' ⟨list⟩' : ''}
                 </th>
               ))}
               <th className="text-left p-2 text-muted-foreground font-semibold">Notes</th>
@@ -84,10 +88,12 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
                 <td className="p-2 text-muted-foreground">{i + 1}</td>
                 <td className="p-2">{t.suite_id}</td>
                 <td className="p-2">{t.tenant_name}</td>
-                {presentGroups.map(g => (
+                {allDisplayGroups.map(g => (
                   <td key={g.id} className="p-2 max-w-[300px]">
                     <div className="whitespace-pre-wrap text-[11px]">
-                      {formatGroupCell(t.groups[g.id])}
+                      {g.collection
+                        ? formatCollection(t.collections[g.id])
+                        : formatScalar(t.scalars[g.id])}
                     </div>
                   </td>
                 ))}
