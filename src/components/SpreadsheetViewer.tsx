@@ -324,7 +324,7 @@ export function SpreadsheetViewer({
 
                       {/* Field label from column_map */}
                       {fieldInfo && (
-                        <div className={`text-[9px] ${GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
+                        <div className={`text-[9px] ${fieldInfo.groupId === 'custom' ? 'text-accent-foreground' : GROUP_COLORS[fieldInfo.groupId].text} truncate`}>
                           {fieldInfo.fieldLabel}
                         </div>
                       )}
