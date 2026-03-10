@@ -121,8 +121,10 @@ export interface GroupSpan {
 export interface TenantObject {
   suite_id: string;
   tenant_name: string;
-  /** groupId → array of collected rows, each row is label→value */
-  groups: Record<string, Record<string, string | number | null>[]>;
+  /** Scalar groups: single record of label→value */
+  scalars: Record<string, Record<string, string | number | null>>;
+  /** Collection groups: array of row entries, each label→value */
+  collections: Record<string, Record<string, string | number | null>[]>;
   notes: string;
 }
 
