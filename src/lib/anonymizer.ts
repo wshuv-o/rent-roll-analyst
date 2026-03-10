@@ -192,20 +192,6 @@ export function deanonymize(tenants: import('./types').TenantObject[], mapping: 
     ...t,
     suite_id: restore(t.suite_id),
     tenant_name: restore(t.tenant_name),
-    monthly_base_rent: restoreAmount(t.monthly_base_rent, reverse),
-    base_rent_psf: restoreAmount(t.base_rent_psf, reverse),
-    gla_sqft: restoreAmount(t.gla_sqft, reverse),
-    recurring_charges: t.recurring_charges.map(rc => ({
-      ...rc,
-      code: restore(rc.code),
-      amount: restoreAmount(rc.amount, reverse),
-      psf: restoreAmount(rc.psf, reverse),
-    })),
-    future_rent_increases: t.future_rent_increases.map(fr => ({
-      ...fr,
-      monthly_amount: restoreAmount(fr.monthly_amount, reverse),
-      psf: restoreAmount(fr.psf, reverse),
-    })),
     notes: restore(t.notes),
   }));
 }

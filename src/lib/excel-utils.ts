@@ -48,7 +48,7 @@ export function exportToExcel(tenants: TenantObject[], fileName: string): void {
   }
 
   // Order by COLUMN_GROUPS definition
-  const orderedGroups = COLUMN_GROUPS
+  const orderedGroups: string[] = COLUMN_GROUPS
     .filter(g => g.id !== 'identity' && groupIds.has(g.id))
     .map(g => g.id);
   for (const gid of groupIds) {
