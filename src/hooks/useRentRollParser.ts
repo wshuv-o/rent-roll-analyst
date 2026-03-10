@@ -126,14 +126,10 @@ export function useRentRollParser() {
       addLog('flag', 'AI is not confident about the layout. Review the flags before continuing.');
     }
 
-    // Step 5 — Parse full sheet
+    // Step 5 — Parse full sheet using ORIGINAL data (not anonymized)
     addLog('system', `Parsing full sheet... ${totalRows} rows processed.`);
-    const parsedTenants = parseSheet(anonymized, instructionJson, addLog);
-    addLog('system', `${parsedTenants.length} tenant blocks found.`);
-
-    // Step 6 — De-anonymization
-    const finalTenants = deanonymize(parsedTenants, mapping);
-    addLog('system', 'De-anonymization complete. Real values restored from memory mapping.');
+    const finalTenants = parseSheet(data, instructionJson, addLog);
+    addLog('system', `${finalTenants.length} tenant blocks found.`);
 
     setTenants(finalTenants);
     setIsProcessing(false);
