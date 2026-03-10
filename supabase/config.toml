@@ -1,1 +1,4 @@
 project_id = "kpnoltlyksypwotgsexg"
+
+[functions.analyze-rent-roll]
+verify_jwt = false
