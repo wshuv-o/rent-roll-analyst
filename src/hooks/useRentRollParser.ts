@@ -70,11 +70,11 @@ export function useRentRollParser() {
   const streamingEntryRef = useRef<string | null>(null);
 
   // Derive group spans whenever instruction changes
-  useEffect(() => {
-    if (instruction) {
-      setGroupSpans(deriveGroupSpans(instruction));
-    }
-  }, [instruction]);
+  // useEffect(() => {
+  //   if (instruction) {
+  //     setGroupSpans(deriveGroupSpans(instruction));
+  //   }
+  // }, [instruction]);
 
   const addLog = useCallback((type: LogType, message: string, isStreaming = false): string => {
     const id = `log-${++logIdCounter}`;
@@ -175,6 +175,7 @@ export function useRentRollParser() {
 
     console.log('[HOOK] AI instruction:', JSON.stringify(instructionJson, null, 2));
     setInstruction(instructionJson);
+    setGroupSpans(deriveGroupSpans(instructionJson));
     setStep('confirm');
     setIsProcessing(false);
     addLog('system', 'Review the highlighted columns. Drag group edges to adjust, click column headers to assign fields, then "Confirm & Parse".');
@@ -305,6 +306,7 @@ export function useRentRollParser() {
         try {
           const instructionJson = JSON.parse(json) as ParsingInstruction;
           setInstruction(instructionJson);
+          setGroupSpans(deriveGroupSpans(instructionJson));
           addLog('output', `New instruction received. Confidence: ${instructionJson.confidence}.`);
         } catch {
           addLog('flag', 'Failed to parse AI instruction JSON.');
