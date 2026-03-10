@@ -237,7 +237,7 @@ export function useRentRollParser() {
         }
       }
 
-      return { ...prev, column_map: newMap };
+      return { ...prev, column_map: newMap as ParsingInstruction['column_map'] };
     });
   }, []);
 
