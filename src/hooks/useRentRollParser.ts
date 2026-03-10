@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import type { LogEntry, LogType, TenantObject, ParsingInstruction, AnonymizationMapping } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
-import { anonymizeSheet, deanonymize } from '@/lib/anonymizer';
+import { anonymizeSheet, deanonymize, detectHeaderRows } from '@/lib/anonymizer';
 import { buildSample } from '@/lib/sample-builder';
 import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
@@ -56,8 +56,9 @@ export function useRentRollParser() {
     }
 
     // Step 2 — Anonymization
-    // Guess header rows (first few rows)
-    const headerRowIndices = [0, 1, 2].filter(i => i < totalRows);
+    // Auto-detect header rows by scanning for header-like content
+    const headerRowIndices = detectHeaderRows(data);
+    addLog('system', `Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
     const { anonymized, mapping, stats } = anonymizeSheet(data, headerRowIndices);
     mappingRef.current = mapping;
     sheetDataRef.current = data; // Keep original for de-anonymization
@@ -127,7 +128,7 @@ export function useRentRollParser() {
 
     // Step 5 — Parse full sheet
     addLog('system', `Parsing full sheet... ${totalRows} rows processed.`);
-    const parsedTenants = parseSheet(anonymized, instructionJson);
+    const parsedTenants = parseSheet(anonymized, instructionJson, addLog);
     addLog('system', `${parsedTenants.length} tenant blocks found.`);
 
     // Step 6 — De-anonymization

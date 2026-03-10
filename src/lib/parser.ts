@@ -1,13 +1,16 @@
-import type { ParsingInstruction, TenantObject, RecurringCharge, FutureRentIncrease } from './types';
+import type { ParsingInstruction, TenantObject } from './types';
 
 function colLetterToIndex(letter: string): number {
   if (!letter) return -1;
   const upper = letter.toUpperCase().trim();
+  if (!upper) return -1;
   let index = 0;
   for (let i = 0; i < upper.length; i++) {
-    index = index * 26 + (upper.charCodeAt(i) - 64);
+    const code = upper.charCodeAt(i);
+    if (code < 65 || code > 90) return -1;
+    index = index * 26 + (code - 64);
   }
-  return index - 1; // 0-indexed
+  return index - 1;
 }
 
 function getCellValue(row: (string | number | null)[], colLetter: string): string {
@@ -26,6 +29,7 @@ function getNumericValue(row: (string | number | null)[], colLetter: string): nu
 }
 
 function shouldSkipRow(row: (string | number | null)[], patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
   const rowStr = row.map(c => String(c || '')).join(' ').toLowerCase();
   return patterns.some(p => {
     try {
@@ -34,30 +38,15 @@ function shouldSkipRow(row: (string | number | null)[], patterns: string[]): boo
       return rowStr.includes(p.toLowerCase());
     }
   });
-}
-
-function isNewTenant(row: (string | number | null)[], rule: string, colMap: ParsingInstruction['column_map']): boolean {
-  const ruleLower = rule.toLowerCase();
-
-  // Common rule: new tenant when tenant_name column is non-empty
-  if (ruleLower.includes('tenant') && (ruleLower.includes('non-empty') || ruleLower.includes('not empty') || ruleLower.includes('populated') || ruleLower.includes('has a value'))) {
-    const name = getCellValue(row, colMap.tenant_name);
-    return name.length > 0;
-  }
-
-  // Common rule: new tenant when suite_id changes
-  if (ruleLower.includes('suite') && (ruleLower.includes('non-empty') || ruleLower.includes('changes') || ruleLower.includes('new'))) {
-    const suite = getCellValue(row, colMap.suite_id);
-    return suite.length > 0;
-  }
-
-  // Fallback: tenant name is non-empty
-  const name = getCellValue(row, colMap.tenant_name);
-  return name.length > 0;
 }
 
 function isAddonSpace(row: (string | number | null)[], patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
   const rowStr = row.map(c => String(c || '')).join(' ').toLowerCase();
+  // Also detect "Add'l Space" pattern directly
+  if (rowStr.includes("add'l space") || rowStr.includes('addl space') || rowStr.includes('additional space')) {
+    return true;
+  }
   return patterns.some(p => {
     try {
       return new RegExp(p, 'i').test(rowStr);
@@ -65,14 +54,58 @@ function isAddonSpace(row: (string | number | null)[], patterns: string[]): bool
       return rowStr.includes(p.toLowerCase());
     }
   });
+}
+
+/**
+ * Determines if a row starts a new tenant block.
+ * Uses a multi-strategy approach — doesn't rely on exact AI phrasing.
+ */
+function isNewTenant(
+  row: (string | number | null)[],
+  _rule: string,
+  colMap: ParsingInstruction['column_map']
+): boolean {
+  const suiteVal = getCellValue(row, colMap.suite_id);
+  const tenantVal = getCellValue(row, colMap.tenant_name);
+
+  // Skip rows where both suite and tenant are empty — these are continuation rows
+  if (!suiteVal && !tenantVal) return false;
+
+  // Skip summary rows (Total SF, Total PSF, etc.)
+  const rowStr = row.map(c => String(c || '')).join(' ').toLowerCase();
+  if (rowStr.includes('total sf') || rowStr.includes('total psf') || rowStr.includes('total nra')) {
+    return false;
+  }
+
+  // Skip addon space rows
+  if (rowStr.includes("add'l space") || rowStr.includes('addl space') || rowStr.includes('additional space')) {
+    return false;
+  }
+
+  // Skip PSF indicator rows
+  if (tenantVal.toLowerCase().startsWith('psf') || tenantVal.startsWith('(')) {
+    return false;
+  }
+
+  // A row with a suite ID is a new tenant
+  if (suiteVal) return true;
+
+  // A row with a tenant name (and no suite) could be a continuation or a new tenant
+  // without a suite — for safety, don't count it as new unless suite is present
+  return false;
 }
 
 export function parseSheet(
   data: (string | number | null)[][],
-  instruction: ParsingInstruction
+  instruction: ParsingInstruction,
+  addLog?: (type: 'system' | 'flag', msg: string) => void
 ): TenantObject[] {
-  const { column_map: cm, data_starts_at_row, skip_row_patterns, addon_space_patterns, new_tenant_rule } = instruction;
-  const startRow = (data_starts_at_row ?? 1) - 1; // convert to 0-indexed
+  const { column_map: cm, data_starts_at_row, skip_row_patterns, addon_space_patterns } = instruction;
+  const startRow = (data_starts_at_row ?? 1) - 1;
+
+  const log = addLog || (() => {});
+
+  log('system', `Parser config: data starts at row ${data_starts_at_row}, suite_id=${cm.suite_id}, tenant_name=${cm.tenant_name}`);
 
   const tenants: TenantObject[] = [];
   let currentTenant: TenantObject | null = null;
@@ -84,18 +117,18 @@ export function parseSheet(
     // Skip summary/total rows
     if (shouldSkipRow(row, skip_row_patterns)) continue;
 
-    // Check if addon space
+    // Check if addon space — attach to current tenant
     if (currentTenant && isAddonSpace(row, addon_space_patterns)) {
-      // Attach addon data to current tenant
       const addonSqft = getNumericValue(row, cm.gla_sqft);
       if (addonSqft !== null && currentTenant.gla_sqft !== null) {
         currentTenant.gla_sqft += addonSqft;
       }
+      currentTenant.notes += (currentTenant.notes ? '; ' : '') + `Add'l space: ${addonSqft ?? 'N/A'} SF`;
       continue;
     }
 
     // Check for new tenant
-    if (isNewTenant(row, new_tenant_rule, cm)) {
+    if (isNewTenant(row, instruction.new_tenant_rule, cm)) {
       if (currentTenant) {
         tenants.push(currentTenant);
       }
@@ -134,15 +167,18 @@ export function parseSheet(
         });
       }
     } else if (currentTenant) {
-      // Continuation row — check for recurring charges and future rent increases
+      // Continuation row — collect recurring charges and future rents
       const rcCode = getCellValue(row, cm.recurring_charge_code);
       const rcAmt = getNumericValue(row, cm.recurring_charge_amount);
       if (rcCode || rcAmt !== null) {
-        currentTenant.recurring_charges.push({
-          code: rcCode,
-          amount: rcAmt,
-          psf: getNumericValue(row, cm.recurring_charge_psf),
-        });
+        // Skip the "*" summary lines
+        if (rcCode !== '*') {
+          currentTenant.recurring_charges.push({
+            code: rcCode,
+            amount: rcAmt,
+            psf: getNumericValue(row, cm.recurring_charge_psf),
+          });
+        }
       }
 
       const frDate = getCellValue(row, cm.future_rent_date);
@@ -157,10 +193,11 @@ export function parseSheet(
     }
   }
 
-  // Don't forget the last tenant
   if (currentTenant) {
     tenants.push(currentTenant);
   }
+
+  log('system', `Parser found ${tenants.length} tenant blocks`);
 
   return tenants;
 }
