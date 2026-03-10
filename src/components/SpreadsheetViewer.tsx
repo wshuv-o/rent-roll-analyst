@@ -74,9 +74,9 @@ export function SpreadsheetViewer({
   const maxCols = useMemo(() => data.reduce((max, row) => Math.max(max, row.length), 0), [data]);
   const visibleRows = useMemo(() => Math.min(data.length, 200), [data]);
 
-  // Build column → group + field mapping
+  // Build column → group + field mapping (includes custom columns)
   const colFieldMap = useMemo(() => {
-    const map = new Map<number, { groupId: ColumnGroupId; field: string; fieldLabel: string }>();
+    const map = new Map<number, { groupId: ColumnGroupId | 'custom'; field: string; fieldLabel: string }>();
     if (!instruction) return map;
     for (const group of COLUMN_GROUPS) {
       for (const field of group.fields) {
@@ -85,6 +85,17 @@ export function SpreadsheetViewer({
           const idx = colLetterToIndex(letter);
           if (idx >= 0) {
             map.set(idx, { groupId: group.id, field, fieldLabel: group.fieldLabels[field] || field });
+          }
+        }
+      }
+    }
+    // Custom columns
+    if (instruction.custom_columns) {
+      for (const [fieldName, letter] of Object.entries(instruction.custom_columns)) {
+        if (letter) {
+          const idx = colLetterToIndex(letter);
+          if (idx >= 0) {
+            map.set(idx, { groupId: 'custom', field: fieldName, fieldLabel: fieldName });
           }
         }
       }
