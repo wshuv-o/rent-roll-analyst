@@ -121,13 +121,17 @@ export function useRentRollParser() {
       return;
     }
 
+    // Debug: log what AI returned
+    console.log('[HOOK] AI instruction:', JSON.stringify(instructionJson, null, 2));
+    addLog('system', `AI mapping: suite=${(instructionJson as ParsingInstruction).column_map.suite_id}, tenant=${(instructionJson as ParsingInstruction).column_map.tenant_name}, data_start=${(instructionJson as ParsingInstruction).data_starts_at_row}`);
+
     // Check confidence
     if ((instructionJson as ParsingInstruction).confidence === 'low') {
       addLog('flag', 'AI is not confident about the layout. Review the flags before continuing.');
     }
 
     // Step 5 — Parse full sheet using ORIGINAL data (not anonymized)
-    addLog('system', `Parsing full sheet... ${totalRows} rows processed.`);
+    addLog('system', `Parsing full sheet... ${totalRows} rows.`);
     const finalTenants = parseSheet(data, instructionJson, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
