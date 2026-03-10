@@ -56,8 +56,9 @@ export function useRentRollParser() {
     }
 
     // Step 2 — Anonymization
-    // Guess header rows (first few rows)
-    const headerRowIndices = [0, 1, 2].filter(i => i < totalRows);
+    // Auto-detect header rows by scanning for header-like content
+    const headerRowIndices = detectHeaderRows(data);
+    addLog('system', `Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
     const { anonymized, mapping, stats } = anonymizeSheet(data, headerRowIndices);
     mappingRef.current = mapping;
     sheetDataRef.current = data; // Keep original for de-anonymization
