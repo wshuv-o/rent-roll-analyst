@@ -99,6 +99,7 @@ export function detectHeaderRows(data: (string | number | null)[][]): number[] {
 }
 
 
+export function anonymizeSheet(
   data: (string | number | null)[][],
   headerRowIndices: number[]
 ): { anonymized: (string | number | null)[][]; mapping: AnonymizationMapping; stats: { names: number; suites: number; amounts: number } } {
