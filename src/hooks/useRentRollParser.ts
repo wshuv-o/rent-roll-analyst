@@ -243,7 +243,7 @@ export function useRentRollParser() {
 
   // Column field assignment via click menu
   const handleColumnAssign = useCallback((colIndex: number, field: string) => {
-    setInstruction(prev => {
+    setInstruction((prev: ParsingInstruction | null) => {
       if (!prev) {
         // No instruction yet — create a blank one
         const blank: ParsingInstruction = {
