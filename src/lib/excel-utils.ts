@@ -41,42 +41,38 @@ export function readExcelFile(file: File): Promise<{
 }
 
 export function exportToExcel(tenants: TenantObject[], fileName: string): void {
-  // Collect all group ids present
-  const groupIds = new Set<string>();
+  const scalarGroupDefs = COLUMN_GROUPS.filter(g => g.id !== 'identity' && !g.collection);
+  const collectionGroupDefs = COLUMN_GROUPS.filter(g => g.collection);
+
+  // Check which groups have data
+  const scalarIds = new Set<string>();
+  const collectionIds = new Set<string>();
   for (const t of tenants) {
-    for (const gid of Object.keys(t.groups)) groupIds.add(gid);
+    for (const gid of Object.keys(t.scalars)) scalarIds.add(gid);
+    for (const gid of Object.keys(t.collections)) collectionIds.add(gid);
   }
 
-  // Order by COLUMN_GROUPS definition
-  const orderedGroups: string[] = COLUMN_GROUPS
-    .filter(g => g.id !== 'identity' && groupIds.has(g.id))
-    .map(g => g.id);
-  for (const gid of groupIds) {
-    if (!orderedGroups.includes(gid)) orderedGroups.push(gid);
-  }
+  const activeScalars = scalarGroupDefs.filter(g => scalarIds.has(g.id));
+  const activeCollections = collectionGroupDefs.filter(g => collectionIds.has(g.id));
+
+  const serializeRecord = (rec: Record<string, string | number | null>) =>
+    Object.entries(rec)
+      .filter(([, v]) => v !== null && v !== '')
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(' | ');
 
   const rows = tenants.map(t => {
     const base: Record<string, unknown> = {
       'Suite ID': t.suite_id,
       'Tenant Name': t.tenant_name,
     };
-
-    for (const gid of orderedGroups) {
-      const groupLabel = COLUMN_GROUPS.find(g => g.id === gid)?.label || gid;
-      const entries = t.groups[gid];
-      if (!entries || entries.length === 0) {
-        base[groupLabel] = '';
-        continue;
-      }
-      // Serialize: each entry as "key: val | key: val", entries separated by ";"
-      base[groupLabel] = entries.map(entry =>
-        Object.entries(entry)
-          .filter(([, v]) => v !== null && v !== '')
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(' | ')
-      ).join('; ');
+    for (const g of activeScalars) {
+      base[g.label] = t.scalars[g.id] ? serializeRecord(t.scalars[g.id]) : '';
     }
-
+    for (const g of activeCollections) {
+      const entries = t.collections[g.id];
+      base[g.label] = entries ? entries.map(serializeRecord).join('; ') : '';
+    }
     base['Notes'] = t.notes;
     return base;
   });
@@ -84,11 +80,6 @@ export function exportToExcel(tenants: TenantObject[], fileName: string): void {
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Parsed Rent Roll');
-
-  const colWidths = Object.keys(rows[0] || {}).map(key => ({
-    wch: Math.max(key.length, ...rows.map(r => String((r as Record<string, unknown>)[key] || '').length)).toString().length > 50 ? 50 : Math.max(key.length, ...rows.map(r => String((r as Record<string, unknown>)[key] || '').length))
-  }));
-  ws['!cols'] = colWidths;
 
   const outputName = fileName.replace(/\.(xlsx|xls)$/i, '') + '_parsed.xlsx';
   XLSX.writeFile(wb, outputName);
