@@ -1,22 +1,37 @@
 import { useState, useCallback, useRef } from 'react';
-import type { LogEntry, LogType, TenantObject, ParsingInstruction, AnonymizationMapping } from '@/lib/types';
+import type { LogEntry, LogType, TenantObject, ParsingInstruction, AnonymizationMapping, WorkflowStep } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
-import { anonymizeSheet, deanonymize, detectHeaderRows } from '@/lib/anonymizer';
+import { anonymizeSheet, detectHeaderRows } from '@/lib/anonymizer';
 import { buildSample } from '@/lib/sample-builder';
 import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
 
 let logIdCounter = 0;
 
+function indexToColLetter(idx: number): string {
+  let letter = '';
+  let n = idx;
+  while (n >= 0) {
+    letter = String.fromCharCode(65 + (n % 26)) + letter;
+    n = Math.floor(n / 26) - 1;
+  }
+  return letter;
+}
+
 export function useRentRollParser() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [tenants, setTenants] = useState<TenantObject[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [fileName, setFileName] = useState('');
+  const [step, setStep] = useState<WorkflowStep>('upload');
 
-  // Store refs for data that persists across the flow
+  // Raw sheet data for spreadsheet viewer
+  const [sheetData, setSheetData] = useState<(string | number | null)[][]>([]);
+  const [headerRows, setHeaderRows] = useState<number[]>([]);
+  const [instruction, setInstruction] = useState<ParsingInstruction | null>(null);
+  const [totalRows, setTotalRows] = useState(0);
+
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
-  const mappingRef = useRef<AnonymizationMapping | null>(null);
   const streamingEntryRef = useRef<string | null>(null);
 
   const addLog = useCallback((type: LogType, message: string, isStreaming = false): string => {
@@ -33,45 +48,47 @@ export function useRentRollParser() {
     setLogs(prev => prev.map(l => l.id === id ? { ...l, message: l.message + text } : l));
   }, []);
 
-  const processFile = useCallback(async (file: File) => {
+  // Step 1: Load file and show in spreadsheet
+  const loadFile = useCallback(async (file: File) => {
     setIsProcessing(true);
     setTenants([]);
+    setInstruction(null);
     setFileName(file.name);
+    setStep('analyzing');
 
-    // Step 1 — Read file
     addLog('system', `File received: ${file.name} — ${formatFileSize(file.size)} — reading sheet...`);
 
     let data: (string | number | null)[][];
-    let totalRows: number;
+    let rows: number;
 
     try {
       const result = await readExcelFile(file);
       data = result.data;
-      totalRows = result.totalRows;
-      sheetDataRef.current = data;
+      rows = result.totalRows;
     } catch (err) {
       addLog('flag', `Failed to read file: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setIsProcessing(false);
+      setStep('upload');
       return;
     }
 
-    // Step 2 — Anonymization
-    // Auto-detect header rows by scanning for header-like content
+    sheetDataRef.current = data;
+    setSheetData(data);
+    setTotalRows(rows);
+
+    // Detect headers
     const headerRowIndices = detectHeaderRows(data);
-    addLog('system', `Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
-    const { anonymized, mapping, stats } = anonymizeSheet(data, headerRowIndices);
-    mappingRef.current = mapping;
-    sheetDataRef.current = data; // Keep original for de-anonymization
+    setHeaderRows(headerRowIndices);
+    addLog('system', `${rows} rows loaded. Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
 
-    addLog('system',
-      `Anonymization complete. ${stats.names} tenant names replaced. ${stats.amounts + stats.suites} values masked. Mapping stored in memory.`
-    );
+    // Anonymize for AI sample only
+    const { anonymized, stats } = anonymizeSheet(data, headerRowIndices);
+    addLog('system', `Anonymized sample: ${stats.names} names, ${stats.suites} suite IDs masked.`);
 
-    // Step 3 — Sample
-    const { html, contextNote, sampleRanges } = buildSample(anonymized, totalRows);
-    addLog('system', `Sample prepared: ${sampleRanges}. Sending to AI agent...`);
+    // Build sample & send to AI
+    const { html, contextNote, sampleRanges } = buildSample(anonymized, rows);
+    addLog('system', `Sample: ${sampleRanges}. Sending to AI...`);
 
-    // Step 4 — AI Analysis (streaming)
     let instructionJson: ParsingInstruction | null = null;
 
     await new Promise<void>((resolve) => {
@@ -79,10 +96,7 @@ export function useRentRollParser() {
 
       streamAnalysis(html, contextNote, {
         onSection: (type: LogType) => {
-          // Finalize previous streaming entry
-          if (currentStreamId) {
-            updateLog(currentStreamId, { isStreaming: false });
-          }
+          if (currentStreamId) updateLog(currentStreamId, { isStreaming: false });
           currentStreamId = addLog(type, '', true);
           streamingEntryRef.current = currentStreamId;
         },
@@ -97,15 +111,13 @@ export function useRentRollParser() {
         onInstruction: (json: string) => {
           try {
             instructionJson = JSON.parse(json) as ParsingInstruction;
-            addLog('output', `Parsing instruction object received. Confidence: ${instructionJson.confidence}.`);
+            addLog('output', `Parsing instruction received. Confidence: ${instructionJson.confidence}.`);
           } catch {
             addLog('flag', 'Failed to parse AI instruction JSON.');
           }
         },
         onDone: () => {
-          if (currentStreamId) {
-            updateLog(currentStreamId, { isStreaming: false });
-          }
+          if (currentStreamId) updateLog(currentStreamId, { isStreaming: false });
           resolve();
         },
         onError: (error: string) => {
@@ -116,34 +128,171 @@ export function useRentRollParser() {
     });
 
     if (!instructionJson) {
-      addLog('flag', 'No parsing instruction received from AI. Cannot proceed.');
+      addLog('flag', 'No parsing instruction received. You can manually assign columns.');
+      setStep('confirm');
       setIsProcessing(false);
       return;
     }
 
-    // Debug: log what AI returned
     console.log('[HOOK] AI instruction:', JSON.stringify(instructionJson, null, 2));
-    addLog('system', `AI mapping: suite=${(instructionJson as ParsingInstruction).column_map.suite_id}, tenant=${(instructionJson as ParsingInstruction).column_map.tenant_name}, data_start=${(instructionJson as ParsingInstruction).data_starts_at_row}`);
+    setInstruction(instructionJson);
+    setStep('confirm');
+    setIsProcessing(false);
+    addLog('system', 'Review the highlighted columns. Drag-select columns to reassign, then click "Confirm & Parse".');
+  }, [addLog, updateLog, appendToLog]);
 
-    // Check confidence
-    if ((instructionJson as ParsingInstruction).confidence === 'low') {
-      addLog('flag', 'AI is not confident about the layout. Review the flags before continuing.');
+  // Column reassignment handler
+  const handleColumnAssign = useCallback((colIndex: number, field: string) => {
+    setInstruction(prev => {
+      if (!prev) {
+        // Create a blank instruction
+        const blank: ParsingInstruction = {
+          header_rows: headerRows,
+          data_starts_at_row: (headerRows.length > 0 ? headerRows[headerRows.length - 1] + 2 : 1),
+          column_map: {
+            suite_id: '', tenant_name: '', lease_start: '', lease_end: '',
+            gla_sqft: '', monthly_base_rent: '', base_rent_psf: '',
+            recurring_charge_code: '', recurring_charge_amount: '', recurring_charge_psf: '',
+            future_rent_date: '', future_rent_amount: '', future_rent_psf: '',
+          },
+          new_tenant_rule: 'suite_id column non-empty',
+          skip_row_patterns: [],
+          addon_space_patterns: [],
+          confidence: 'medium',
+          notes: 'Manual assignment',
+        };
+        if (field) {
+          (blank.column_map as Record<string, string>)[field] = indexToColLetter(colIndex);
+        }
+        return blank;
+      }
+
+      const newMap = { ...prev.column_map };
+      // Clear any existing assignment for this field
+      if (field) {
+        // Clear previous column that had this field
+        for (const [key, val] of Object.entries(newMap)) {
+          const existingIdx = colLetterToIdx(val);
+          if (existingIdx === colIndex) {
+            (newMap as Record<string, string>)[key] = '';
+          }
+        }
+        (newMap as Record<string, string>)[field] = indexToColLetter(colIndex);
+      } else {
+        // Clearing: find what was assigned to this column
+        for (const [key, val] of Object.entries(newMap)) {
+          const existingIdx = colLetterToIdx(val);
+          if (existingIdx === colIndex) {
+            (newMap as Record<string, string>)[key] = '';
+          }
+        }
+      }
+
+      return { ...prev, column_map: newMap };
+    });
+  }, [headerRows]);
+
+  // Step 2: Confirm and parse
+  const confirmAndParse = useCallback(() => {
+    if (!instruction) {
+      addLog('flag', 'No column mapping defined. Please assign columns first.');
+      return;
     }
 
-    // Step 5 — Parse full sheet using ORIGINAL data (not anonymized)
+    setStep('parsing');
+    setIsProcessing(true);
     addLog('system', `Parsing full sheet... ${totalRows} rows.`);
-    const finalTenants = parseSheet(data, instructionJson, addLog);
+
+    const data = sheetDataRef.current;
+    const finalTenants = parseSheet(data, instruction, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
     setTenants(finalTenants);
+    setStep('done');
     setIsProcessing(false);
-  }, [addLog, updateLog, appendToLog]);
+  }, [instruction, totalRows, addLog]);
+
+  // Re-analyze: go back to upload
+  const resetToUpload = useCallback(() => {
+    setStep('upload');
+    setSheetData([]);
+    setInstruction(null);
+    setTenants([]);
+    setHeaderRows([]);
+    setLogs([]);
+  }, []);
+
+  // Re-analyze with same file
+  const reAnalyze = useCallback(() => {
+    // Reset to confirm state but trigger new AI analysis
+    setInstruction(null);
+    setTenants([]);
+    setStep('analyzing');
+    // Re-run the AI part with existing data
+    const data = sheetDataRef.current;
+    if (data.length === 0) return;
+
+    setIsProcessing(true);
+    const headerRowIndices = detectHeaderRows(data);
+    const { anonymized } = anonymizeSheet(data, headerRowIndices);
+    const { html, contextNote, sampleRanges } = buildSample(anonymized, totalRows);
+    addLog('system', `Re-analyzing... Sample: ${sampleRanges}`);
+
+    let instructionJson: ParsingInstruction | null = null;
+
+    streamAnalysis(html, contextNote, {
+      onSection: (type: LogType) => {
+        addLog(type, '', true);
+      },
+      onToken: (_type: LogType, token: string) => {
+        // simplified for re-analysis
+      },
+      onInstruction: (json: string) => {
+        try {
+          instructionJson = JSON.parse(json) as ParsingInstruction;
+          setInstruction(instructionJson);
+          addLog('output', `New instruction received. Confidence: ${instructionJson.confidence}.`);
+        } catch {
+          addLog('flag', 'Failed to parse AI instruction JSON.');
+        }
+      },
+      onDone: () => {
+        setStep('confirm');
+        setIsProcessing(false);
+        addLog('system', 'Review updated column mapping.');
+      },
+      onError: (error: string) => {
+        addLog('flag', error);
+        setStep('confirm');
+        setIsProcessing(false);
+      },
+    });
+  }, [totalRows, addLog]);
 
   return {
     logs,
     tenants,
     isProcessing,
     fileName,
-    processFile,
+    step,
+    sheetData,
+    headerRows,
+    instruction,
+    loadFile,
+    handleColumnAssign,
+    confirmAndParse,
+    resetToUpload,
+    reAnalyze,
   };
+}
+
+function colLetterToIdx(letter: string): number {
+  if (!letter) return -1;
+  const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
+  if (!upper) return -1;
+  let index = 0;
+  for (let i = 0; i < upper.length; i++) {
+    index = index * 26 + (upper.charCodeAt(i) - 64);
+  }
+  return index - 1;
 }

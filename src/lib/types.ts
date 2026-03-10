@@ -64,3 +64,61 @@ export interface TenantObject {
   future_rent_increases: FutureRentIncrease[];
   notes: string;
 }
+
+// Column group definitions for visual mapping
+export type ColumnGroupId = 
+  | 'identity' 
+  | 'lease' 
+  | 'space' 
+  | 'base-rent' 
+  | 'charges' 
+  | 'future-rent';
+
+export interface ColumnGroup {
+  id: ColumnGroupId;
+  label: string;
+  fields: (keyof ParsingInstruction['column_map'])[];
+  fieldLabels: Record<string, string>;
+}
+
+export const COLUMN_GROUPS: ColumnGroup[] = [
+  {
+    id: 'identity',
+    label: 'Identity',
+    fields: ['suite_id', 'tenant_name'],
+    fieldLabels: { suite_id: 'Suite ID', tenant_name: 'Tenant Name' },
+  },
+  {
+    id: 'lease',
+    label: 'Lease Dates',
+    fields: ['lease_start', 'lease_end'],
+    fieldLabels: { lease_start: 'Start', lease_end: 'End' },
+  },
+  {
+    id: 'space',
+    label: 'Space',
+    fields: ['gla_sqft'],
+    fieldLabels: { gla_sqft: 'GLA (SF)' },
+  },
+  {
+    id: 'base-rent',
+    label: 'Base Rent',
+    fields: ['monthly_base_rent', 'base_rent_psf'],
+    fieldLabels: { monthly_base_rent: 'Monthly', base_rent_psf: 'PSF' },
+  },
+  {
+    id: 'charges',
+    label: 'Recurring Charges',
+    fields: ['recurring_charge_code', 'recurring_charge_amount', 'recurring_charge_psf'],
+    fieldLabels: { recurring_charge_code: 'Code', recurring_charge_amount: 'Amount', recurring_charge_psf: 'PSF' },
+  },
+  {
+    id: 'future-rent',
+    label: 'Future Rent Increases',
+    fields: ['future_rent_date', 'future_rent_amount', 'future_rent_psf'],
+    fieldLabels: { future_rent_date: 'Date', future_rent_amount: 'Amount', future_rent_psf: 'PSF' },
+  },
+];
+
+// Workflow state
+export type WorkflowStep = 'upload' | 'analyzing' | 'confirm' | 'parsing' | 'done';
