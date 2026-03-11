@@ -64,34 +64,20 @@ export function parseSheet(
     const suiteVal = suiteColIdx >= 0 ? getCellValue(row, suiteColIdx) : '';
     const tenantVal = tenantColIdx >= 0 ? getCellValue(row, tenantColIdx) : '';
 
-    // Addon space — attach as continuation with a note
-    if (current && (rowStr.includes("add'l space") || rowStr.includes('addl space') || rowStr.includes('additional space') ||
-      (addon_space_patterns.length > 0 && addon_space_patterns.some(p => {
-        try { return new RegExp(p, 'i').test(rowStr); } catch { return rowStr.includes(p.toLowerCase()); }
-      })))) {
-      collectRow(row, groupSpans, columnLabels, current);
-      current.notes += (current.notes ? '; ' : '') + `Add'l space row ${i + 1}`;
-      continue;
-    }
-
     // NEW TENANT — suite_id column has a value
     if (suiteVal) {
-      if (tenantVal.toLowerCase().startsWith('psf') || tenantVal.startsWith('(')) {
-        // sub-line — treat as continuation
-      } else {
-        if (current) tenants.push(current);
+      if (current) tenants.push(current);
 
-        current = {
-          suite_id: suiteVal,
-          tenant_name: tenantVal,
-          scalars: {},
-          collections: {},
-          notes: '',
-        };
+      current = {
+        suite_id: suiteVal,
+        tenant_name: tenantVal,
+        scalars: {},
+        collections: {},
+        notes: '',
+      };
 
-        collectRow(row, groupSpans, columnLabels, current);
-        continue;
-      }
+      collectRow(row, groupSpans, columnLabels, current);
+      continue;
     }
 
     // CONTINUATION ROW
