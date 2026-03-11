@@ -69,6 +69,8 @@ export function useRentRollParser() {
 
   // Column aliases: colIndex → custom display name
   const [columnAliases, setColumnAliases] = useState<Record<number, string>>({});
+  // Resolved column labels (set at parse time for export use)
+  const [resolvedLabels, setResolvedLabels] = useState<Record<number, string>>({});
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
@@ -345,6 +347,7 @@ export function useRentRollParser() {
 
     const data = sheetDataRef.current;
     const labels = buildColumnLabels();
+    setResolvedLabels(labels);
     const finalTenants = parseSheet(data, instruction, groupSpans, labels, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
@@ -408,12 +411,16 @@ export function useRentRollParser() {
     });
   }, [totalRows, addLog]);
 
+  const goBackToConfirm = useCallback(() => {
+    setStep('confirm');
+  }, []);
+
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases,
+    columnAliases, resolvedLabels,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename,
-    confirmAndParse, resetToUpload, reAnalyze,
+    confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   };
 }

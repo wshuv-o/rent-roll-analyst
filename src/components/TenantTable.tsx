@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
-import type { TenantObject, ColumnGroupId } from '@/lib/types';
+import type { TenantObject, ColumnGroupId, ParsingInstruction } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
-import { Download } from 'lucide-react';
+import { exportTemplatizedExcel } from '@/lib/template-export';
+import { Download, ArrowLeft } from 'lucide-react';
 
 const GROUP_COLORS: Record<ColumnGroupId, string> = {
   'identity': 'text-group-identity',
@@ -16,6 +17,9 @@ const GROUP_COLORS: Record<ColumnGroupId, string> = {
 interface TenantTableProps {
   tenants: TenantObject[];
   fileName: string;
+  instruction: ParsingInstruction | null;
+  columnLabels: Record<number, string>;
+  onGoBack?: () => void;
 }
 
 function formatScalar(record: Record<string, string | number | null> | undefined): string {
@@ -36,8 +40,7 @@ function formatCollection(rows: Record<string, string | number | null>[] | undef
   }).join('\n');
 }
 
-export function TenantTable({ tenants, fileName }: TenantTableProps) {
-  // Determine which groups are present (split by scalar/collection)
+export function TenantTable({ tenants, fileName, instruction, columnLabels, onGoBack }: TenantTableProps) {
   const { scalarGroups, collectionGroups } = useMemo(() => {
     const scalarIds = new Set<string>();
     const collectionIds = new Set<string>();
@@ -56,16 +59,38 @@ export function TenantTable({ tenants, fileName }: TenantTableProps) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="font-mono text-sm text-muted-foreground">
-          {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} parsed
-        </span>
-        <button
-          onClick={() => exportToExcel(tenants, fileName)}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
-        >
-          <Download className="w-3.5 h-3.5" />
-          Download Excel
-        </button>
+        <div className="flex items-center gap-3">
+          {onGoBack && (
+            <button
+              onClick={onGoBack}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono rounded-sm bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back
+            </button>
+          )}
+          <span className="font-mono text-sm text-muted-foreground">
+            {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} parsed
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToExcel(tenants, fileName)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Raw
+          </button>
+          {instruction && (
+            <button
+              onClick={() => exportTemplatizedExcel(tenants, fileName, instruction, columnLabels)}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download Template
+            </button>
+          )}
+        </div>
       </div>
       <div className="overflow-auto max-h-[calc(100vh-280px)] border border-panel-border rounded-sm">
         <table className="w-full text-xs font-mono">
