@@ -377,7 +377,10 @@ export function SpreadsheetViewer({
                     {Array.from({ length: maxCols }, (_, c) => {
                       const val = c < row.length ? row[c] : null;
                       const groupId = getLiveGroupId(c);
-                      const colors = groupId ? GROUP_COLORS[groupId] : null;
+                      const builtinColors = groupId ? GROUP_COLORS[groupId] : null;
+                      const cg = groupId ? customGroups.find(g => g.id === groupId) : null;
+                      const cgIdx = cg ? customGroups.indexOf(cg) : 0;
+                      const colors = builtinColors || (cg ? getCustomGroupColors(cgIdx) : null);
                       return (
                         <td
                           key={c}
