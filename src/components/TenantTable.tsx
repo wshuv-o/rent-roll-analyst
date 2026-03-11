@@ -39,7 +39,7 @@ function formatCollection(rows: Record<string, string | number | null>[] | undef
   }).join('\n');
 }
 
-export function TenantTable({ tenants, fileName, onBack }: TenantTableProps) {
+export function TenantTable({ tenants, fileName, customGroups = [], onBack }: TenantTableProps) {
   // Determine which groups are present (split by scalar/collection)
   const { scalarGroups, collectionGroups } = useMemo(() => {
     const scalarIds = new Set<string>();
