@@ -235,8 +235,12 @@ export function SpreadsheetViewer({
             <div className="sticky top-0 z-30 flex h-7" style={{ paddingLeft: `${ROW_NUM_WIDTH}px` }}>
               <div className="relative w-full" style={{ minWidth: `${maxCols * COL_WIDTH}px` }}>
                 {liveSpans.map(span => {
-                  const colors = GROUP_COLORS[span.groupId];
-                  const group = COLUMN_GROUPS.find(g => g.id === span.groupId);
+                  const builtinColors = GROUP_COLORS[span.groupId];
+                  const builtinGroup = COLUMN_GROUPS.find(g => g.id === span.groupId);
+                  const customGroup = customGroups.find(g => g.id === span.groupId);
+                  const customIdx = customGroup ? customGroups.indexOf(customGroup) : 0;
+                  const colors = builtinColors || getCustomGroupColors(customIdx);
+                  const label = builtinGroup?.label || customGroup?.label || span.groupId;
                   return (
                     <div
                       key={span.groupId}
@@ -253,7 +257,7 @@ export function SpreadsheetViewer({
                           onMouseDown={(e) => handleResizeStart(span.groupId, 'left', e)}
                         />
                       )}
-                      <span className="pointer-events-none select-none">{group?.label}</span>
+                      <span className="pointer-events-none select-none">{label}</span>
                       {/* Right drag handle */}
                       {onGroupResize && (
                         <div
