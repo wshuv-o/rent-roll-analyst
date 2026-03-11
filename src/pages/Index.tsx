@@ -62,11 +62,13 @@ const Index = () => {
                   instruction={instruction}
                   headerRows={headerRows}
                   groupSpans={groupSpans}
+                  customGroups={customGroups}
                   columnAliases={columnAliases}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
                   onCustomFieldAssign={step === 'confirm' ? handleCustomFieldAssign : undefined}
                   onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
                   onColumnRename={step === 'confirm' ? handleColumnRename : undefined}
+                  onCreateCustomGroup={step === 'confirm' ? handleCreateCustomGroup : undefined}
                 />
               </div>
               <ColumnMappingToolbar
