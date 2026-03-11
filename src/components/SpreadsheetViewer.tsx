@@ -1,17 +1,19 @@
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react';
-import type { ParsingInstruction, ColumnGroupId, GroupSpan } from '@/lib/types';
-import { COLUMN_GROUPS } from '@/lib/types';
+import type { ParsingInstruction, ColumnGroupId, GroupSpan, CustomGroup } from '@/lib/types';
+import { COLUMN_GROUPS, CUSTOM_GROUP_HUES } from '@/lib/types';
 
 interface SpreadsheetViewerProps {
   data: (string | number | null)[][];
   instruction: ParsingInstruction | null;
   headerRows: number[];
   groupSpans: GroupSpan[];
+  customGroups?: CustomGroup[];
   columnAliases?: Record<number, string>;
   onColumnAssign?: (colIndex: number, field: string) => void;
   onCustomFieldAssign?: (colIndex: number, fieldName: string) => void;
-  onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
+  onGroupResize?: (groupId: ColumnGroupId | string, startCol: number, endCol: number) => void;
   onColumnRename?: (colIndex: number, name: string) => void;
+  onCreateCustomGroup?: (colIndex: number, groupName: string, collection: boolean) => void;
 }
 
 function colLetterToIndex(letter: string): number {
@@ -35,7 +37,7 @@ function indexToColLetter(idx: number): string {
   return letter;
 }
 
-const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: string; hsl: string }> = {
+const GROUP_COLORS: Record<string, { border: string; bg: string; text: string; hsl: string }> = {
   'identity':    { border: 'border-group-identity',    bg: 'bg-group-identity-bg',    text: 'text-group-identity',    hsl: 'var(--group-identity)' },
   'lease':       { border: 'border-group-lease',       bg: 'bg-group-lease-bg',       text: 'text-group-lease',       hsl: 'var(--group-lease)' },
   'space':       { border: 'border-group-space',       bg: 'bg-group-space-bg',       text: 'text-group-space',       hsl: 'var(--group-space)' },
@@ -43,6 +45,15 @@ const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: st
   'charges':     { border: 'border-group-charges',     bg: 'bg-group-charges-bg',     text: 'text-group-charges',     hsl: 'var(--group-charges)' },
   'future-rent': { border: 'border-group-future-rent', bg: 'bg-group-future-rent-bg', text: 'text-group-future-rent', hsl: 'var(--group-future-rent)' },
 };
+
+function getCustomGroupColors(index: number): { border: string; bg: string; text: string } {
+  const hue = CUSTOM_GROUP_HUES[index % CUSTOM_GROUP_HUES.length];
+  return {
+    border: `border-[hsl(${hue},70%,55%)]`,
+    bg: `bg-[hsl(${hue},70%,55%,0.08)]`,
+    text: `text-[hsl(${hue},70%,55%)]`,
+  };
+}
 
 const COL_WIDTH = 100;
 const ROW_NUM_WIDTH = 40;
@@ -52,19 +63,24 @@ export function SpreadsheetViewer({
   instruction,
   headerRows,
   groupSpans,
+  customGroups = [],
   columnAliases = {},
   onColumnAssign,
   onCustomFieldAssign,
   onGroupResize,
   onColumnRename,
+  onCreateCustomGroup,
 }: SpreadsheetViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
   const [customFieldInput, setCustomFieldInput] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ colIndex: number; x: number; y: number } | null>(null);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupCollection, setNewGroupCollection] = useState(true);
 
   // Drag-resize state
   const [resizing, setResizing] = useState<{
-    groupId: ColumnGroupId;
+    groupId: string;
     edge: 'left' | 'right';
     originalStart: number;
     originalEnd: number;
@@ -120,7 +136,7 @@ export function SpreadsheetViewer({
   const dataStartRow = instruction?.data_starts_at_row ? instruction.data_starts_at_row - 1 : 0;
 
   // Resize drag handlers
-  const handleResizeStart = useCallback((groupId: ColumnGroupId, edge: 'left' | 'right', e: React.MouseEvent) => {
+  const handleResizeStart = useCallback((groupId: string, edge: 'left' | 'right', e: React.MouseEvent) => {
     if (!onGroupResize) return;
     e.preventDefault();
     e.stopPropagation();
@@ -177,13 +193,16 @@ export function SpreadsheetViewer({
     setAssignMenuCol({ colIndex, x: e.clientX, y: e.clientY });
   }, [onColumnAssign]);
 
-  // Close assign menu on outside click
+  // Close assign menu / context menu on outside click
   useEffect(() => {
-    if (!assignMenuCol) return;
-    const handler = () => setAssignMenuCol(null);
+    if (!assignMenuCol && !contextMenu) return;
+    const handler = () => {
+      setAssignMenuCol(null);
+      setContextMenu(null);
+    };
     document.addEventListener('click', handler, { once: true });
     return () => document.removeEventListener('click', handler);
-  }, [assignMenuCol]);
+  }, [assignMenuCol, contextMenu]);
 
   const handleFieldAssign = useCallback((field: string) => {
     if (!assignMenuCol || !onColumnAssign) return;
@@ -192,7 +211,7 @@ export function SpreadsheetViewer({
   }, [assignMenuCol, onColumnAssign]);
 
   // Get live group membership during resize
-  const getLiveGroupId = useCallback((colIdx: number): ColumnGroupId | undefined => {
+  const getLiveGroupId = useCallback((colIdx: number): string | undefined => {
     for (const span of liveSpans) {
       if (colIdx >= span.startCol && colIdx <= span.endCol) return span.groupId;
     }
@@ -219,8 +238,12 @@ export function SpreadsheetViewer({
             <div className="sticky top-0 z-30 flex h-7" style={{ paddingLeft: `${ROW_NUM_WIDTH}px` }}>
               <div className="relative w-full" style={{ minWidth: `${maxCols * COL_WIDTH}px` }}>
                 {liveSpans.map(span => {
-                  const colors = GROUP_COLORS[span.groupId];
-                  const group = COLUMN_GROUPS.find(g => g.id === span.groupId);
+                  const builtinColors = GROUP_COLORS[span.groupId];
+                  const builtinGroup = COLUMN_GROUPS.find(g => g.id === span.groupId);
+                  const customGroup = customGroups.find(g => g.id === span.groupId);
+                  const customIdx = customGroup ? customGroups.indexOf(customGroup) : 0;
+                  const colors = builtinColors || getCustomGroupColors(customIdx);
+                  const label = builtinGroup?.label || customGroup?.label || span.groupId;
                   return (
                     <div
                       key={span.groupId}
@@ -237,7 +260,7 @@ export function SpreadsheetViewer({
                           onMouseDown={(e) => handleResizeStart(span.groupId, 'left', e)}
                         />
                       )}
-                      <span className="pointer-events-none select-none">{group?.label}</span>
+                      <span className="pointer-events-none select-none">{label}</span>
                       {/* Right drag handle */}
                       {onGroupResize && (
                         <div
@@ -260,8 +283,12 @@ export function SpreadsheetViewer({
                 {Array.from({ length: maxCols }, (_, c) => {
                   const groupId = getLiveGroupId(c);
                   const fieldInfo = colFieldMap.get(c);
-                  const colors = groupId ? GROUP_COLORS[groupId] : null;
+                  const builtinColors = groupId ? GROUP_COLORS[groupId] : null;
+                  const customGroup = groupId ? customGroups.find(g => g.id === groupId) : null;
+                  const customIdx = customGroup ? customGroups.indexOf(customGroup) : 0;
+                  const colors = builtinColors || (customGroup ? getCustomGroupColors(customIdx) : null);
                   const alias = columnAliases[c];
+                  const isUnassigned = !groupId && !fieldInfo;
                   return (
                     <th
                       key={c}
@@ -271,9 +298,13 @@ export function SpreadsheetViewer({
                       style={{ width: `${COL_WIDTH}px` }}
                       onClick={(e) => handleColHeaderClick(c, e)}
                       onContextMenu={(e) => {
-                        if (!onColumnAssign) return;
+                        if (!onCreateCustomGroup && !onColumnAssign) return;
                         e.preventDefault();
-                        onColumnAssign(c, '');
+                        if (isUnassigned && onCreateCustomGroup) {
+                          setContextMenu({ colIndex: c, x: e.clientX, y: e.clientY });
+                        } else if (onColumnAssign) {
+                          onColumnAssign(c, '');
+                        }
                       }}
                     >
                       {/* Column letter — click to assign */}
@@ -349,7 +380,10 @@ export function SpreadsheetViewer({
                     {Array.from({ length: maxCols }, (_, c) => {
                       const val = c < row.length ? row[c] : null;
                       const groupId = getLiveGroupId(c);
-                      const colors = groupId ? GROUP_COLORS[groupId] : null;
+                      const builtinColors = groupId ? GROUP_COLORS[groupId] : null;
+                      const cg = groupId ? customGroups.find(g => g.id === groupId) : null;
+                      const cgIdx = cg ? customGroups.indexOf(cg) : 0;
+                      const colors = builtinColors || (cg ? getCustomGroupColors(cgIdx) : null);
                       return (
                         <td
                           key={c}
@@ -469,6 +503,74 @@ export function SpreadsheetViewer({
               Clear Assignment
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Right-click context menu for creating custom groups */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-card border border-panel-border rounded-sm shadow-lg py-1 min-w-[220px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2 py-1 text-[10px] text-muted-foreground font-heading uppercase tracking-wider border-b border-panel-border">
+            Column {indexToColLetter(contextMenu.colIndex)} — Unassigned
+          </div>
+          <form
+            className="px-2 py-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const name = newGroupName.trim();
+              if (name && onCreateCustomGroup) {
+                onCreateCustomGroup(contextMenu.colIndex, name, newGroupCollection);
+                setNewGroupName('');
+                setNewGroupCollection(true);
+                setContextMenu(null);
+              }
+            }}
+          >
+            <div className="text-[9px] font-heading uppercase tracking-wider text-muted-foreground mb-1">
+              Create New Group
+            </div>
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Group name..."
+              className="w-full px-1.5 py-0.5 text-[11px] font-mono bg-muted border border-panel-border rounded-sm outline-none focus:ring-1 focus:ring-foreground/20 mb-1"
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+            <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground mb-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newGroupCollection}
+                onChange={(e) => setNewGroupCollection(e.target.checked)}
+                className="rounded"
+              />
+              Multi-row (collection)
+            </label>
+            <button
+              type="submit"
+              disabled={!newGroupName.trim()}
+              className="w-full px-2 py-1 text-[10px] font-mono bg-accent text-accent-foreground rounded-sm hover:opacity-90 disabled:opacity-40"
+            >
+              Create Group
+            </button>
+          </form>
+          {onColumnAssign && (
+            <div className="border-t border-panel-border mt-1">
+              <button
+                className="w-full text-left px-3 py-1 text-[11px] font-mono text-destructive hover:bg-muted transition-colors"
+                onClick={() => {
+                  onColumnAssign(contextMenu.colIndex, '');
+                  setContextMenu(null);
+                }}
+              >
+                Clear Assignment
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

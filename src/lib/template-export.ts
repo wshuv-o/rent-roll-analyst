@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { TenantObject } from './types';
+import type { TenantObject, CustomGroup } from './types';
 
 /**
  * Templatized rent roll export.
@@ -141,7 +141,7 @@ function findNthStringValue(record: Record<string, string | number | null> | und
   return '';
 }
 
-export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: string): void {
+export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: string, customGroups: CustomGroup[] = []): void {
   // ─── 1. Gather unique charge codes from recurring charges ───
   const chargeCodeSet = new Set<string>();
   for (const t of tenants) {
@@ -383,6 +383,90 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     }
   }
 
+  // ── Custom group columns ──
+  // Gather unique labels per custom group across all tenants
+  const customGroupColumns: { group: CustomGroup; labels: string[]; startCol: number }[] = [];
+  let customStartCol = Math.max(
+    FIXED_COUNT,
+    chargeStartCol + chargeColCount + (chargeColCount > 0 ? 1 : 0),
+    ...futureCodeBlocks.map(b => b.startCol + b.steps * 2 + 1),
+  );
+
+  for (const cg of customGroups) {
+    const labelSet = new Set<string>();
+    for (const t of tenants) {
+      const data = cg.collection ? t.collections[cg.id] : (t.scalars[cg.id] ? [t.scalars[cg.id]] : []);
+      if (data) {
+        for (const entry of data) {
+          for (const label of Object.keys(entry)) {
+            labelSet.add(label);
+          }
+        }
+      }
+    }
+    const labels = Array.from(labelSet);
+    if (labels.length === 0) continue;
+
+    customGroupColumns.push({ group: cg, labels, startCol: customStartCol });
+
+    // Row 0: Category banner
+    ws[XLSX.utils.encode_cell({ r: 0, c: customStartCol })] = {
+      v: cg.label, s: makeCategoryStyle(COLORS.chargeCategoryBg),
+    };
+    if (labels.length > 1) {
+      merges.push({ s: { r: 0, c: customStartCol }, e: { r: 0, c: customStartCol + labels.length - 1 } });
+    }
+    for (let i = 1; i < labels.length; i++) {
+      ws[XLSX.utils.encode_cell({ r: 0, c: customStartCol + i })] = { v: '', s: makeCategoryStyle(COLORS.chargeCategoryBg) };
+    }
+
+    // Row 1: empty
+    for (let i = 0; i < labels.length; i++) {
+      ws[XLSX.utils.encode_cell({ r: 1, c: customStartCol + i })] = { v: '', s: makeHeaderStyle() };
+    }
+
+    // Row 2: Column headers
+    for (let i = 0; i < labels.length; i++) {
+      ws[XLSX.utils.encode_cell({ r: 2, c: customStartCol + i })] = { v: labels[i], s: makeHeaderStyle() };
+    }
+
+    // Data rows
+    for (let ti = 0; ti < tenants.length; ti++) {
+      const t = tenants[ti];
+      const r = HEADER_ROWS + ti;
+
+      if (cg.collection) {
+        // For collections, concatenate values with semicolons
+        const entries = t.collections[cg.id] || [];
+        for (let li = 0; li < labels.length; li++) {
+          const values = entries.map(e => e[labels[li]]).filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+          const combined = values.map(v => String(v).trim()).join('; ');
+          const numVal = parseFloat(String(combined).replace(/[,$]/g, ''));
+          if (values.length === 1 && !isNaN(numVal)) {
+            ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: numVal, t: 'n' };
+          } else {
+            ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: combined };
+          }
+        }
+      } else {
+        const entry = t.scalars[cg.id];
+        for (let li = 0; li < labels.length; li++) {
+          const val = entry ? entry[labels[li]] : null;
+          if (val !== null && val !== undefined && String(val).trim()) {
+            const numVal = parseFloat(String(val).replace(/[,$]/g, ''));
+            if (!isNaN(numVal)) {
+              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: numVal, t: 'n' };
+            } else {
+              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: String(val).trim() };
+            }
+          }
+        }
+      }
+    }
+
+    customStartCol += labels.length + 1; // +1 blank separator
+  }
+
   // Set merges
   ws['!merges'] = merges;
 
@@ -392,6 +476,7 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     FIXED_COUNT - 1,
     chargeStartCol + chargeColCount - 1,
     ...futureCodeBlocks.map(b => b.startCol + b.steps * 2 - 1),
+    ...customGroupColumns.map(cg => cg.startCol + cg.labels.length - 1),
     0
   );
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(maxRow, 2), c: Math.max(maxCol, FIXED_COUNT - 1) } });

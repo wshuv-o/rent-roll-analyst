@@ -9,9 +9,9 @@ const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases,
+    columnAliases, customGroups,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
-    handleColumnRename,
+    handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
 
@@ -62,11 +62,13 @@ const Index = () => {
                   instruction={instruction}
                   headerRows={headerRows}
                   groupSpans={groupSpans}
+                  customGroups={customGroups}
                   columnAliases={columnAliases}
                   onColumnAssign={step === 'confirm' ? handleColumnAssign : undefined}
                   onCustomFieldAssign={step === 'confirm' ? handleCustomFieldAssign : undefined}
                   onGroupResize={step === 'confirm' ? handleGroupResize : undefined}
                   onColumnRename={step === 'confirm' ? handleColumnRename : undefined}
+                  onCreateCustomGroup={step === 'confirm' ? handleCreateCustomGroup : undefined}
                 />
               </div>
               <ColumnMappingToolbar
@@ -88,7 +90,7 @@ const Index = () => {
 
           {step === 'done' && tenants.length > 0 && (
             <div className="flex-1 overflow-y-auto p-4">
-              <TenantTable tenants={tenants} fileName={fileName} onBack={goBackToConfirm} />
+              <TenantTable tenants={tenants} fileName={fileName} customGroups={customGroups} onBack={goBackToConfirm} />
             </div>
           )}
 

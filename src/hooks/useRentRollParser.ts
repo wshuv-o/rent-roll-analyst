@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId } from '@/lib/types';
+import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId, CustomGroup } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
 import { anonymizeSheet, detectHeaderRows } from '@/lib/anonymizer';
@@ -69,6 +69,8 @@ export function useRentRollParser() {
 
   // Column aliases: colIndex → custom display name
   const [columnAliases, setColumnAliases] = useState<Record<number, string>>({});
+  // Custom groups created by user
+  const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
@@ -97,6 +99,7 @@ export function useRentRollParser() {
     setInstruction(null);
     setGroupSpans([]);
     setColumnAliases({});
+    setCustomGroups([]);
     setFileName(file.name);
     setStep('analyzing');
 
@@ -186,7 +189,7 @@ export function useRentRollParser() {
 
   // Handle group span resize (dragging edges).
   // Only updates the visual span — does NOT move or reassign column_map fields.
-  const handleGroupResize = useCallback((groupId: ColumnGroupId, newStartCol: number, newEndCol: number) => {
+  const handleGroupResize = useCallback((groupId: ColumnGroupId | string, newStartCol: number, newEndCol: number) => {
     setGroupSpans(prev => {
       const updated = prev.map(s =>
         s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s
@@ -311,6 +314,17 @@ export function useRentRollParser() {
     });
   }, []);
 
+  // Create a custom group starting at a given column
+  const handleCreateCustomGroup = useCallback((colIndex: number, groupName: string, collection: boolean) => {
+    const groupId = `custom-${groupName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const newGroup: CustomGroup = { id: groupId, label: groupName, collection };
+    setCustomGroups(prev => [...prev, newGroup]);
+    setGroupSpans(prev => [
+      ...prev,
+      { groupId, startCol: colIndex, endCol: colIndex, collection },
+    ].sort((a, b) => a.startCol - b.startCol));
+  }, []);
+
   // Build column labels from aliases + header row values + column letters
   const buildColumnLabels = useCallback((): Record<number, string> => {
     const labels: Record<number, string> = {};
@@ -362,6 +376,7 @@ export function useRentRollParser() {
     setHeaderRows([]);
     setLogs([]);
     setColumnAliases({});
+    setCustomGroups([]);
   }, []);
 
   const reAnalyze = useCallback(() => {
@@ -369,6 +384,7 @@ export function useRentRollParser() {
     setGroupSpans([]);
     setTenants([]);
     setColumnAliases({});
+    setCustomGroups([]);
     setStep('analyzing');
     const data = sheetDataRef.current;
     if (data.length === 0) return;
@@ -415,9 +431,9 @@ export function useRentRollParser() {
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases,
+    columnAliases, customGroups,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
-    handleColumnRename,
+    handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   };
 }

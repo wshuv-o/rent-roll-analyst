@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { TenantObject, ColumnGroupId } from '@/lib/types';
+import type { TenantObject, ColumnGroupId, CustomGroup } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
 import { exportTemplatizedRentRoll } from '@/lib/template-export';
@@ -17,6 +17,7 @@ const GROUP_COLORS: Record<ColumnGroupId, string> = {
 interface TenantTableProps {
   tenants: TenantObject[];
   fileName: string;
+  customGroups?: CustomGroup[];
   onBack?: () => void;
 }
 
@@ -38,7 +39,7 @@ function formatCollection(rows: Record<string, string | number | null>[] | undef
   }).join('\n');
 }
 
-export function TenantTable({ tenants, fileName, onBack }: TenantTableProps) {
+export function TenantTable({ tenants, fileName, customGroups = [], onBack }: TenantTableProps) {
   // Determine which groups are present (split by scalar/collection)
   const { scalarGroups, collectionGroups } = useMemo(() => {
     const scalarIds = new Set<string>();
@@ -81,7 +82,7 @@ export function TenantTable({ tenants, fileName, onBack }: TenantTableProps) {
             Download Raw
           </button>
           <button
-            onClick={() => exportTemplatizedRentRoll(tenants, fileName)}
+            onClick={() => exportTemplatizedRentRoll(tenants, fileName, customGroups)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-accent text-accent-foreground hover:bg-accent/80 border border-border transition-colors"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />

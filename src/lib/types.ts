@@ -106,11 +106,21 @@ export const COLUMN_GROUPS: ColumnGroup[] = [
 
 // Group span: which columns belong to a group (independent of field assignments)
 export interface GroupSpan {
-  groupId: ColumnGroupId;
+  groupId: ColumnGroupId | string;
   startCol: number;
   endCol: number;
   collection: boolean;
 }
+
+// Custom group metadata (user-created via right-click)
+export interface CustomGroup {
+  id: string;
+  label: string;
+  collection: boolean;
+}
+
+// Palette of colors for custom groups (cycled)
+export const CUSTOM_GROUP_HUES = [320, 190, 60, 100, 350, 230] as const;
 
 /**
  * New simplified TenantObject:
