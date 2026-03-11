@@ -280,8 +280,12 @@ export function SpreadsheetViewer({
                 {Array.from({ length: maxCols }, (_, c) => {
                   const groupId = getLiveGroupId(c);
                   const fieldInfo = colFieldMap.get(c);
-                  const colors = groupId ? GROUP_COLORS[groupId] : null;
+                  const builtinColors = groupId ? GROUP_COLORS[groupId] : null;
+                  const customGroup = groupId ? customGroups.find(g => g.id === groupId) : null;
+                  const customIdx = customGroup ? customGroups.indexOf(customGroup) : 0;
+                  const colors = builtinColors || (customGroup ? getCustomGroupColors(customIdx) : null);
                   const alias = columnAliases[c];
+                  const isUnassigned = !groupId && !fieldInfo;
                   return (
                     <th
                       key={c}
@@ -291,9 +295,13 @@ export function SpreadsheetViewer({
                       style={{ width: `${COL_WIDTH}px` }}
                       onClick={(e) => handleColHeaderClick(c, e)}
                       onContextMenu={(e) => {
-                        if (!onColumnAssign) return;
+                        if (!onCreateCustomGroup && !onColumnAssign) return;
                         e.preventDefault();
-                        onColumnAssign(c, '');
+                        if (isUnassigned && onCreateCustomGroup) {
+                          setContextMenu({ colIndex: c, x: e.clientX, y: e.clientY });
+                        } else if (onColumnAssign) {
+                          onColumnAssign(c, '');
+                        }
                       }}
                     >
                       {/* Column letter — click to assign */}
