@@ -315,17 +315,17 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     const sqft = findNumericValue(spaceData, 'gla', 'sqft', 'sf', 'area', 'size', 'nra');
     ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? '' };
 
-    // Base rent
+    // Base rent — first numeric = monthly rent, second = PSF
     const rentData = t.scalars['base-rent'];
-    const monthlyRent = findNumericValue(rentData, 'monthly', 'month', 'rent');
+    const monthlyRent = findNthNumericValue(rentData, 0);
     ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? '' };
 
     // Annual Base Rent = Monthly * 12 (formula)
     const monthlyRef = colToRef(5, r + 1);
     ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12` };
 
-    // Rent PSF
-    const rentPsf = findNumericValue(rentData, 'psf', 'per sq', 'per foot');
+    // Rent PSF — second numeric value in base-rent
+    const rentPsf = findNthNumericValue(rentData, 1);
     ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? '' };
 
     // Current charges — fill per code
