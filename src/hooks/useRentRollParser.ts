@@ -408,12 +408,16 @@ export function useRentRollParser() {
     });
   }, [totalRows, addLog]);
 
+  const goBackToConfirm = useCallback(() => {
+    setStep('confirm');
+  }, []);
+
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
     columnAliases,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename,
-    confirmAndParse, resetToUpload, reAnalyze,
+    confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   };
 }
