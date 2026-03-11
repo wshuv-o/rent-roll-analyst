@@ -21,7 +21,7 @@ export function UploadPanel({ onFileSelect, isProcessing, tenants, fileName }: U
         <FileUpload onFileSelect={onFileSelect} isProcessing={isProcessing} />
         {tenants.length > 0 && (
           <div className="mt-4">
-            <TenantTable tenants={tenants} fileName={fileName} instruction={null} columnLabels={{}} />
+            <TenantTable tenants={tenants} fileName={fileName} />
           </div>
         )}
       </div>
