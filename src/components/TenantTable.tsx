@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import type { TenantObject, ColumnGroupId } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
-import { Download } from 'lucide-react';
+import { exportTemplatizedRentRoll } from '@/lib/template-export';
+import { Download, FileSpreadsheet, ArrowLeft } from 'lucide-react';
 
 const GROUP_COLORS: Record<ColumnGroupId, string> = {
   'identity': 'text-group-identity',
