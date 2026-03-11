@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { TenantObject, ColumnGroupId } from '@/lib/types';
+import type { TenantObject, ColumnGroupId, CustomGroup } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { exportToExcel } from '@/lib/excel-utils';
 import { exportTemplatizedRentRoll } from '@/lib/template-export';
