@@ -377,7 +377,7 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
         const rateCol = block.startCol + s * 2 + 1;
         if (s < steps.length) {
           ws[XLSX.utils.encode_cell({ r, c: dateCol })] = { v: steps[s].date };
-          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].rate ?? '' };
+          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].rate ?? 0, t: 'n' };
         }
       }
     }
