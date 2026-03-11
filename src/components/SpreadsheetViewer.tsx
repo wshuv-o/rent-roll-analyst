@@ -37,7 +37,7 @@ function indexToColLetter(idx: number): string {
   return letter;
 }
 
-const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: string; hsl: string }> = {
+const GROUP_COLORS: Record<string, { border: string; bg: string; text: string; hsl: string }> = {
   'identity':    { border: 'border-group-identity',    bg: 'bg-group-identity-bg',    text: 'text-group-identity',    hsl: 'var(--group-identity)' },
   'lease':       { border: 'border-group-lease',       bg: 'bg-group-lease-bg',       text: 'text-group-lease',       hsl: 'var(--group-lease)' },
   'space':       { border: 'border-group-space',       bg: 'bg-group-space-bg',       text: 'text-group-space',       hsl: 'var(--group-space)' },
@@ -45,6 +45,15 @@ const GROUP_COLORS: Record<ColumnGroupId, { border: string; bg: string; text: st
   'charges':     { border: 'border-group-charges',     bg: 'bg-group-charges-bg',     text: 'text-group-charges',     hsl: 'var(--group-charges)' },
   'future-rent': { border: 'border-group-future-rent', bg: 'bg-group-future-rent-bg', text: 'text-group-future-rent', hsl: 'var(--group-future-rent)' },
 };
+
+function getCustomGroupColors(index: number): { border: string; bg: string; text: string } {
+  const hue = CUSTOM_GROUP_HUES[index % CUSTOM_GROUP_HUES.length];
+  return {
+    border: `border-[hsl(${hue},70%,55%)]`,
+    bg: `bg-[hsl(${hue},70%,55%,0.08)]`,
+    text: `text-[hsl(${hue},70%,55%)]`,
+  };
+}
 
 const COL_WIDTH = 100;
 const ROW_NUM_WIDTH = 40;
@@ -54,19 +63,24 @@ export function SpreadsheetViewer({
   instruction,
   headerRows,
   groupSpans,
+  customGroups = [],
   columnAliases = {},
   onColumnAssign,
   onCustomFieldAssign,
   onGroupResize,
   onColumnRename,
+  onCreateCustomGroup,
 }: SpreadsheetViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [assignMenuCol, setAssignMenuCol] = useState<{ colIndex: number; x: number; y: number } | null>(null);
   const [customFieldInput, setCustomFieldInput] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ colIndex: number; x: number; y: number } | null>(null);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupCollection, setNewGroupCollection] = useState(true);
 
   // Drag-resize state
   const [resizing, setResizing] = useState<{
-    groupId: ColumnGroupId;
+    groupId: string;
     edge: 'left' | 'right';
     originalStart: number;
     originalEnd: number;
