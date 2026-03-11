@@ -12,7 +12,7 @@ const Index = () => {
     columnAliases,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename,
-    confirmAndParse, resetToUpload, reAnalyze,
+    confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
 
   return (
