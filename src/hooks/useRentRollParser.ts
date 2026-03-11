@@ -69,6 +69,8 @@ export function useRentRollParser() {
 
   // Column aliases: colIndex → custom display name
   const [columnAliases, setColumnAliases] = useState<Record<number, string>>({});
+  // Resolved column labels (set at parse time for export use)
+  const [resolvedLabels, setResolvedLabels] = useState<Record<number, string>>({});
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
