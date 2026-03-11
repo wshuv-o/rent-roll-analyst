@@ -313,20 +313,20 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     // Space
     const spaceData = t.scalars['space'];
     const sqft = findNumericValue(spaceData, 'gla', 'sqft', 'sf', 'area', 'size', 'nra');
-    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? 0, t: 'n' };
 
     // Base rent — first numeric = monthly rent, second = PSF
     const rentData = t.scalars['base-rent'];
     const monthlyRent = findNthNumericValue(rentData, 0);
-    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? 0, t: 'n' };
 
     // Annual Base Rent = Monthly * 12 (formula)
     const monthlyRef = colToRef(5, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12` };
+    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12`, t: 'n' };
 
     // Rent PSF — second numeric value in base-rent
     const rentPsf = findNthNumericValue(rentData, 1);
-    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? 0, t: 'n' };
 
     // Current charges — fill per code
     const chargeEntries = t.collections['charges'] || [];
@@ -342,21 +342,21 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
 
     for (let i = 0; i < chargeCodes.length; i++) {
       const c = chargeStartCol + i;
-      ws[XLSX.utils.encode_cell({ r, c })] = { v: chargeByCode[chargeCodes[i]] ?? 0 };
+      ws[XLSX.utils.encode_cell({ r, c })] = { v: chargeByCode[chargeCodes[i]] ?? 0, t: 'n' };
     }
 
     // Total Other Charges = SUM of charge columns (formula)
     if (chargeColCount > 0) {
       const firstChargeRef = colToRef(chargeStartCol, r + 1);
       const lastChargeRef = colToRef(chargeStartCol + chargeColCount - 1, r + 1);
-      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${firstChargeRef}:${lastChargeRef})` };
+      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${firstChargeRef}:${lastChargeRef})`, t: 'n' };
     } else {
-      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { v: 0 };
+      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { v: 0, t: 'n' };
     }
 
     // Total Annual Other Charges = Total Other Charges * 12 (formula)
     const totalChargesRef = colToRef(8, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${totalChargesRef}*12` };
+    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${totalChargesRef}*12`, t: 'n' };
 
     // Future rent steps
     const futureEntries = t.collections['future-rent'] || [];
@@ -377,7 +377,7 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
         const rateCol = block.startCol + s * 2 + 1;
         if (s < steps.length) {
           ws[XLSX.utils.encode_cell({ r, c: dateCol })] = { v: steps[s].date };
-          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].rate ?? '' };
+          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].rate ?? 0, t: 'n' };
         }
       }
     }
