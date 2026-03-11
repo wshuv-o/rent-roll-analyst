@@ -141,7 +141,7 @@ function findNthStringValue(record: Record<string, string | number | null> | und
   return '';
 }
 
-export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: string): void {
+export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: string, customGroups: CustomGroup[] = []): void {
   // ─── 1. Gather unique charge codes from recurring charges ───
   const chargeCodeSet = new Set<string>();
   for (const t of tenants) {
