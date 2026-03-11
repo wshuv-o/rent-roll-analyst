@@ -69,6 +69,8 @@ export function useRentRollParser() {
 
   // Column aliases: colIndex → custom display name
   const [columnAliases, setColumnAliases] = useState<Record<number, string>>({});
+  // Custom groups created by user
+  const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
