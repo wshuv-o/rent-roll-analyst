@@ -384,6 +384,7 @@ export function useRentRollParser() {
     setGroupSpans([]);
     setTenants([]);
     setColumnAliases({});
+    setCustomGroups([]);
     setStep('analyzing');
     const data = sheetDataRef.current;
     if (data.length === 0) return;
