@@ -314,6 +314,17 @@ export function useRentRollParser() {
     });
   }, []);
 
+  // Create a custom group starting at a given column
+  const handleCreateCustomGroup = useCallback((colIndex: number, groupName: string, collection: boolean) => {
+    const groupId = `custom-${groupName.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const newGroup: CustomGroup = { id: groupId, label: groupName, collection };
+    setCustomGroups(prev => [...prev, newGroup]);
+    setGroupSpans(prev => [
+      ...prev,
+      { groupId, startCol: colIndex, endCol: colIndex, collection },
+    ].sort((a, b) => a.startCol - b.startCol));
+  }, []);
+
   // Build column labels from aliases + header row values + column letters
   const buildColumnLabels = useCallback((): Record<number, string> => {
     const labels: Record<number, string> = {};
