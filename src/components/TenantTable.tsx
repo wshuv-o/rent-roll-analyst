@@ -82,7 +82,7 @@ export function TenantTable({ tenants, fileName, customGroups = [], onBack }: Te
             Download Raw
           </button>
           <button
-            onClick={() => exportTemplatizedRentRoll(tenants, fileName)}
+            onClick={() => exportTemplatizedRentRoll(tenants, fileName, customGroups)}
             className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-accent text-accent-foreground hover:bg-accent/80 border border-border transition-colors"
           >
             <FileSpreadsheet className="w-3.5 h-3.5" />
