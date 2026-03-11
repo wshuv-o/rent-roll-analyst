@@ -313,20 +313,20 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     // Space
     const spaceData = t.scalars['space'];
     const sqft = findNumericValue(spaceData, 'gla', 'sqft', 'sf', 'area', 'size', 'nra');
-    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? 0, t: 'n' };
 
     // Base rent — first numeric = monthly rent, second = PSF
     const rentData = t.scalars['base-rent'];
     const monthlyRent = findNthNumericValue(rentData, 0);
-    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? 0, t: 'n' };
 
     // Annual Base Rent = Monthly * 12 (formula)
     const monthlyRef = colToRef(5, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12` };
+    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12`, t: 'n' };
 
     // Rent PSF — second numeric value in base-rent
     const rentPsf = findNthNumericValue(rentData, 1);
-    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? '' };
+    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? 0, t: 'n' };
 
     // Current charges — fill per code
     const chargeEntries = t.collections['charges'] || [];
