@@ -99,6 +99,7 @@ export function useRentRollParser() {
     setInstruction(null);
     setGroupSpans([]);
     setColumnAliases({});
+    setCustomGroups([]);
     setFileName(file.name);
     setStep('analyzing');
 
