@@ -208,7 +208,7 @@ export function SpreadsheetViewer({
   }, [assignMenuCol, onColumnAssign]);
 
   // Get live group membership during resize
-  const getLiveGroupId = useCallback((colIdx: number): ColumnGroupId | undefined => {
+  const getLiveGroupId = useCallback((colIdx: number): string | undefined => {
     for (const span of liveSpans) {
       if (colIdx >= span.startCol && colIdx <= span.endCol) return span.groupId;
     }
