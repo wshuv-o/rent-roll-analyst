@@ -74,17 +74,15 @@ export function parseSheet(
       continue;
     }
 
-    // NEW TENANT — suite_id OR tenant_name column has a value
-    const hasIdentity = suiteVal || tenantVal;
-    if (hasIdentity) {
-      // Skip sub-lines that look like PSF notes or parenthetical annotations
-      if (!suiteVal && (tenantVal.toLowerCase().startsWith('psf') || tenantVal.startsWith('('))) {
+    // NEW TENANT — suite_id column has a value
+    if (suiteVal) {
+      if (tenantVal.toLowerCase().startsWith('psf') || tenantVal.startsWith('(')) {
         // sub-line — treat as continuation
       } else {
         if (current) tenants.push(current);
 
         current = {
-          suite_id: suiteVal || '',
+          suite_id: suiteVal,
           tenant_name: tenantVal,
           scalars: {},
           collections: {},
