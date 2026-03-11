@@ -17,6 +17,7 @@ const GROUP_COLORS: Record<ColumnGroupId, string> = {
 interface TenantTableProps {
   tenants: TenantObject[];
   fileName: string;
+  onBack?: () => void;
 }
 
 function formatScalar(record: Record<string, string | number | null> | undefined): string {
