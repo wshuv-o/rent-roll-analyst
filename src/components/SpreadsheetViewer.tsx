@@ -1,17 +1,19 @@
 import { useRef, useMemo, useState, useCallback, useEffect } from 'react';
-import type { ParsingInstruction, ColumnGroupId, GroupSpan } from '@/lib/types';
-import { COLUMN_GROUPS } from '@/lib/types';
+import type { ParsingInstruction, ColumnGroupId, GroupSpan, CustomGroup } from '@/lib/types';
+import { COLUMN_GROUPS, CUSTOM_GROUP_HUES } from '@/lib/types';
 
 interface SpreadsheetViewerProps {
   data: (string | number | null)[][];
   instruction: ParsingInstruction | null;
   headerRows: number[];
   groupSpans: GroupSpan[];
+  customGroups?: CustomGroup[];
   columnAliases?: Record<number, string>;
   onColumnAssign?: (colIndex: number, field: string) => void;
   onCustomFieldAssign?: (colIndex: number, fieldName: string) => void;
-  onGroupResize?: (groupId: ColumnGroupId, startCol: number, endCol: number) => void;
+  onGroupResize?: (groupId: ColumnGroupId | string, startCol: number, endCol: number) => void;
   onColumnRename?: (colIndex: number, name: string) => void;
+  onCreateCustomGroup?: (colIndex: number, groupName: string, collection: boolean) => void;
 }
 
 function colLetterToIndex(letter: string): number {
