@@ -58,16 +58,36 @@ export function TenantTable({ tenants, fileName, onBack }: TenantTableProps) {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <span className="font-mono text-sm text-muted-foreground">
-          {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} parsed
-        </span>
-        <button
-          onClick={() => exportToExcel(tenants, fileName)}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
-        >
-          <Download className="w-3.5 h-3.5" />
-          Download Excel
-        </button>
+        <div className="flex items-center gap-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Back
+            </button>
+          )}
+          <span className="font-mono text-sm text-muted-foreground">
+            {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} parsed
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => exportToExcel(tenants, fileName)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download Raw
+          </button>
+          <button
+            onClick={() => exportTemplatizedRentRoll(tenants, fileName)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono rounded-sm bg-accent text-accent-foreground hover:bg-accent/80 border border-border transition-colors"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            Download Template
+          </button>
+        </div>
       </div>
       <div className="overflow-auto max-h-[calc(100vh-280px)] border border-panel-border rounded-sm">
         <table className="w-full text-xs font-mono">
