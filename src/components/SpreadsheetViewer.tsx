@@ -136,7 +136,7 @@ export function SpreadsheetViewer({
   const dataStartRow = instruction?.data_starts_at_row ? instruction.data_starts_at_row - 1 : 0;
 
   // Resize drag handlers
-  const handleResizeStart = useCallback((groupId: ColumnGroupId, edge: 'left' | 'right', e: React.MouseEvent) => {
+  const handleResizeStart = useCallback((groupId: string, edge: 'left' | 'right', e: React.MouseEvent) => {
     if (!onGroupResize) return;
     e.preventDefault();
     e.stopPropagation();
