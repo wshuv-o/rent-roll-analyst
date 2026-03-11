@@ -193,13 +193,16 @@ export function SpreadsheetViewer({
     setAssignMenuCol({ colIndex, x: e.clientX, y: e.clientY });
   }, [onColumnAssign]);
 
-  // Close assign menu on outside click
+  // Close assign menu / context menu on outside click
   useEffect(() => {
-    if (!assignMenuCol) return;
-    const handler = () => setAssignMenuCol(null);
+    if (!assignMenuCol && !contextMenu) return;
+    const handler = () => {
+      setAssignMenuCol(null);
+      setContextMenu(null);
+    };
     document.addEventListener('click', handler, { once: true });
     return () => document.removeEventListener('click', handler);
-  }, [assignMenuCol]);
+  }, [assignMenuCol, contextMenu]);
 
   const handleFieldAssign = useCallback((field: string) => {
     if (!assignMenuCol || !onColumnAssign) return;
