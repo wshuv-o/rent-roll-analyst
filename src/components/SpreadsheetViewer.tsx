@@ -505,6 +505,74 @@ export function SpreadsheetViewer({
           </div>
         </div>
       )}
+
+      {/* Right-click context menu for creating custom groups */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-card border border-panel-border rounded-sm shadow-lg py-1 min-w-[220px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-2 py-1 text-[10px] text-muted-foreground font-heading uppercase tracking-wider border-b border-panel-border">
+            Column {indexToColLetter(contextMenu.colIndex)} — Unassigned
+          </div>
+          <form
+            className="px-2 py-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const name = newGroupName.trim();
+              if (name && onCreateCustomGroup) {
+                onCreateCustomGroup(contextMenu.colIndex, name, newGroupCollection);
+                setNewGroupName('');
+                setNewGroupCollection(true);
+                setContextMenu(null);
+              }
+            }}
+          >
+            <div className="text-[9px] font-heading uppercase tracking-wider text-muted-foreground mb-1">
+              Create New Group
+            </div>
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Group name..."
+              className="w-full px-1.5 py-0.5 text-[11px] font-mono bg-muted border border-panel-border rounded-sm outline-none focus:ring-1 focus:ring-foreground/20 mb-1"
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+            <label className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground mb-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newGroupCollection}
+                onChange={(e) => setNewGroupCollection(e.target.checked)}
+                className="rounded"
+              />
+              Multi-row (collection)
+            </label>
+            <button
+              type="submit"
+              disabled={!newGroupName.trim()}
+              className="w-full px-2 py-1 text-[10px] font-mono bg-accent text-accent-foreground rounded-sm hover:opacity-90 disabled:opacity-40"
+            >
+              Create Group
+            </button>
+          </form>
+          {onColumnAssign && (
+            <div className="border-t border-panel-border mt-1">
+              <button
+                className="w-full text-left px-3 py-1 text-[11px] font-mono text-destructive hover:bg-muted transition-colors"
+                onClick={() => {
+                  onColumnAssign(contextMenu.colIndex, '');
+                  setContextMenu(null);
+                }}
+              >
+                Clear Assignment
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
