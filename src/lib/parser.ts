@@ -68,17 +68,16 @@ export function parseSheet(
     if (suiteVal) {
       if (current) tenants.push(current);
 
-        current = {
-          suite_id: suiteVal,
-          tenant_name: tenantVal,
-          scalars: {},
-          collections: {},
-          notes: '',
-        };
+      current = {
+        suite_id: suiteVal,
+        tenant_name: tenantVal,
+        scalars: {},
+        collections: {},
+        notes: '',
+      };
 
-        collectRow(row, groupSpans, columnLabels, current);
-        continue;
-      }
+      collectRow(row, groupSpans, columnLabels, current);
+      continue;
     }
 
     // CONTINUATION ROW
