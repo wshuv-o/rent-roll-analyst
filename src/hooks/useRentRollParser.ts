@@ -189,7 +189,7 @@ export function useRentRollParser() {
 
   // Handle group span resize (dragging edges).
   // Only updates the visual span — does NOT move or reassign column_map fields.
-  const handleGroupResize = useCallback((groupId: ColumnGroupId, newStartCol: number, newEndCol: number) => {
+  const handleGroupResize = useCallback((groupId: ColumnGroupId | string, newStartCol: number, newEndCol: number) => {
     setGroupSpans(prev => {
       const updated = prev.map(s =>
         s.groupId === groupId ? { ...s, startCol: newStartCol, endCol: newEndCol } : s
