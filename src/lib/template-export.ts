@@ -349,14 +349,14 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     if (chargeColCount > 0) {
       const firstChargeRef = colToRef(chargeStartCol, r + 1);
       const lastChargeRef = colToRef(chargeStartCol + chargeColCount - 1, r + 1);
-      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${firstChargeRef}:${lastChargeRef})` };
+      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${firstChargeRef}:${lastChargeRef})`, t: 'n' };
     } else {
-      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { v: 0 };
+      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { v: 0, t: 'n' };
     }
 
     // Total Annual Other Charges = Total Other Charges * 12 (formula)
     const totalChargesRef = colToRef(8, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${totalChargesRef}*12` };
+    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${totalChargesRef}*12`, t: 'n' };
 
     // Future rent steps
     const futureEntries = t.collections['future-rent'] || [];
