@@ -347,6 +347,7 @@ export function useRentRollParser() {
 
     const data = sheetDataRef.current;
     const labels = buildColumnLabels();
+    setResolvedLabels(labels);
     const finalTenants = parseSheet(data, instruction, groupSpans, labels, addLog);
     addLog('system', `${finalTenants.length} tenant blocks found.`);
 
