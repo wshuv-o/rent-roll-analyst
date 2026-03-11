@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { TenantObject } from './types';
+import type { TenantObject, CustomGroup } from './types';
 
 /**
  * Templatized rent roll export.
