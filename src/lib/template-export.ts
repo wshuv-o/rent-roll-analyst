@@ -75,9 +75,10 @@ function makeCategoryStyle(bg: string): Record<string, unknown> {
   };
 }
 
-/** Extract a numeric value from a label→value record for a given label substring match */
+/** Extract a numeric value from a label→value record for a given label substring match, with positional fallback */
 function findNumericValue(record: Record<string, string | number | null> | undefined, ...keywords: string[]): number | null {
   if (!record) return null;
+  // Try keyword match first
   for (const [label, val] of Object.entries(record)) {
     const lower = label.toLowerCase();
     if (keywords.some(k => lower.includes(k.toLowerCase()))) {
@@ -86,15 +87,55 @@ function findNumericValue(record: Record<string, string | number | null> | undef
       return isNaN(n) ? null : n;
     }
   }
+  // Fallback: return the first parseable numeric value
+  for (const [, val] of Object.entries(record)) {
+    if (val === null || val === '') continue;
+    const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
+    if (!isNaN(n)) return n;
+  }
+  return null;
+}
+
+/** Get the Nth numeric value from a record (0-indexed) */
+function findNthNumericValue(record: Record<string, string | number | null> | undefined, index: number): number | null {
+  if (!record) return null;
+  let count = 0;
+  for (const [, val] of Object.entries(record)) {
+    if (val === null || val === '') continue;
+    const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
+    if (!isNaN(n)) {
+      if (count === index) return n;
+      count++;
+    }
+  }
   return null;
 }
 
 function findStringValue(record: Record<string, string | number | null> | undefined, ...keywords: string[]): string {
   if (!record) return '';
+  // Try keyword match first
   for (const [label, val] of Object.entries(record)) {
     const lower = label.toLowerCase();
     if (keywords.some(k => lower.includes(k.toLowerCase()))) {
       return val !== null && val !== undefined ? String(val).trim() : '';
+    }
+  }
+  // Fallback: return the first non-empty string value
+  for (const [, val] of Object.entries(record)) {
+    if (val !== null && val !== undefined && String(val).trim()) return String(val).trim();
+  }
+  return '';
+}
+
+/** Get the Nth non-empty string value from a record (0-indexed) */
+function findNthStringValue(record: Record<string, string | number | null> | undefined, index: number): string {
+  if (!record) return '';
+  let count = 0;
+  for (const [, val] of Object.entries(record)) {
+    const s = val !== null && val !== undefined ? String(val).trim() : '';
+    if (s) {
+      if (count === index) return s;
+      count++;
     }
   }
   return '';
@@ -274,17 +315,17 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     const sqft = findNumericValue(spaceData, 'gla', 'sqft', 'sf', 'area', 'size', 'nra');
     ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? '' };
 
-    // Base rent
+    // Base rent — first numeric = monthly rent, second = PSF
     const rentData = t.scalars['base-rent'];
-    const monthlyRent = findNumericValue(rentData, 'monthly', 'month', 'rent');
+    const monthlyRent = findNthNumericValue(rentData, 0);
     ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? '' };
 
     // Annual Base Rent = Monthly * 12 (formula)
     const monthlyRef = colToRef(5, r + 1);
     ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12` };
 
-    // Rent PSF
-    const rentPsf = findNumericValue(rentData, 'psf', 'per sq', 'per foot');
+    // Rent PSF — second numeric value in base-rent
+    const rentPsf = findNthNumericValue(rentData, 1);
     ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? '' };
 
     // Current charges — fill per code
