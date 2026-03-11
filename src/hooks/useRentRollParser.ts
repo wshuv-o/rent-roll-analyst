@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId } from '@/lib/types';
+import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId, CustomGroup } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
 import { readExcelFile, formatFileSize } from '@/lib/excel-utils';
 import { anonymizeSheet, detectHeaderRows } from '@/lib/anonymizer';
