@@ -431,9 +431,9 @@ export function useRentRollParser() {
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases,
+    columnAliases, customGroups,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
-    handleColumnRename,
+    handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   };
 }
