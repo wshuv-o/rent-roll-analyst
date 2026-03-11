@@ -342,7 +342,7 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
 
     for (let i = 0; i < chargeCodes.length; i++) {
       const c = chargeStartCol + i;
-      ws[XLSX.utils.encode_cell({ r, c })] = { v: chargeByCode[chargeCodes[i]] ?? 0 };
+      ws[XLSX.utils.encode_cell({ r, c })] = { v: chargeByCode[chargeCodes[i]] ?? 0, t: 'n' };
     }
 
     // Total Other Charges = SUM of charge columns (formula)
