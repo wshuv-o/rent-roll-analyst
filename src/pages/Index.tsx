@@ -120,6 +120,18 @@ const Index = () => {
           <ActivityLog entries={logs} />
         </div>
       </div>
+      <Dialog open={showSentData} onOpenChange={setShowSentData}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">Anonymized Data Sent to AI</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto text-xs font-mono">
+            {sentSampleHtml && (
+              <div dangerouslySetInnerHTML={{ __html: sentSampleHtml }} />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

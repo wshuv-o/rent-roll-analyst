@@ -37,17 +37,11 @@ export function buildSample(
 
   const headerRow = `<tr><th></th>${colLetters.map(l => `<th>${l}</th>`).join('')}</tr>`;
 
-  let tableBody = rowsToHtml(topRows, 0);
-  if (bottomRows.length > 0) {
-    tableBody += `\n<tr><td colspan="${maxCols + 1}" style="text-align:center;font-style:italic;">... rows ${firstEnd + 1}–${lastStart} omitted ...</td></tr>\n`;
-    tableBody += rowsToHtml(bottomRows, lastStart);
-  }
+  const tableBody = rowsToHtml(topRows, 0);
 
   const html = `<table border="1" cellpadding="4" cellspacing="0">\n<thead>${headerRow}</thead>\n<tbody>\n${tableBody}\n</tbody>\n</table>`;
 
-  const rangeStr = bottomRows.length > 0
-    ? `rows 1–${firstEnd} + rows ${lastStart + 1}–${totalRows}`
-    : `rows 1–${firstEnd}`;
+  const rangeStr = `rows 1–${firstEnd}`;
 
   const contextNote = `This sheet has ${totalRows} total rows. You are seeing ${rangeStr}. The full sheet will be processed after you confirm the layout.`;
 
