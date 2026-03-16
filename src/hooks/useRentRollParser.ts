@@ -380,6 +380,7 @@ export function useRentRollParser() {
     setLogs([]);
     setColumnAliases({});
     setCustomGroups([]);
+    setSentSampleHtml(null);
   }, []);
 
   const reAnalyze = useCallback(() => {
