@@ -1,19 +1,23 @@
+import { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { SpreadsheetViewer } from '@/components/SpreadsheetViewer';
 import { ColumnMappingToolbar } from '@/components/ColumnMappingToolbar';
 import { TenantTable } from '@/components/TenantTable';
 import { ActivityLog } from '@/components/ActivityLog';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
   
 const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases, customGroups,
+    columnAliases, customGroups, sentSampleHtml,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
+
+  const [showSentData, setShowSentData] = useState(false);
 
   return (
     <div className="h-screen flex flex-col bg-background">
