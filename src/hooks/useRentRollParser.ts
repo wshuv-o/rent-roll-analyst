@@ -133,6 +133,7 @@ export function useRentRollParser() {
     addLog('system', `Anonymized sample: ${stats.names} names, ${stats.suites} suite IDs masked.`);
 
     const { html, contextNote, sampleRanges } = buildSample(anonymized, rows);
+    setSentSampleHtml(html);
     addLog('system', `Sample: ${sampleRanges}. Sending to AI...`);
 
     let instructionJson: ParsingInstruction | null = null;
