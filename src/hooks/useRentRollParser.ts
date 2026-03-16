@@ -72,6 +72,8 @@ export function useRentRollParser() {
   // Custom groups created by user
   const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
 
+  const [sentSampleHtml, setSentSampleHtml] = useState<string | null>(null);
+
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
 
