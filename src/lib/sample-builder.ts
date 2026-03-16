@@ -5,13 +5,25 @@
  */
 export function buildSample(
   data: (string | number | null)[][],
-  totalRows: number
+  totalRows: number,
+  sampleRowCount?: number,
+  sampleColCount?: number
 ): { html: string; contextNote: string; sampleRanges: string } {
-  const firstEnd = Math.min(15, totalRows);
+  const firstEnd = Math.min(sampleRowCount || 15, totalRows);
 
   const topRows = data.slice(0, firstEnd);
 
-  const maxCols = data.reduce((max, row) => Math.max(max, row.length), 0);
+  // Compute effective max cols: use provided limit, or trim trailing empty columns
+  let effectiveMaxCols = 0;
+  for (const row of topRows) {
+    for (let c = row.length - 1; c >= 0; c--) {
+      if (row[c] !== null && row[c] !== undefined && String(row[c]).trim() !== '') {
+        effectiveMaxCols = Math.max(effectiveMaxCols, c + 1);
+        break;
+      }
+    }
+  }
+  const maxCols = sampleColCount ? Math.min(sampleColCount, effectiveMaxCols || sampleColCount) : effectiveMaxCols;
 
   // Column letters
   const colLetters = Array.from({ length: maxCols }, (_, i) => {

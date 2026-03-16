@@ -139,4 +139,4 @@ export interface TenantObject {
 }
 
 // Workflow state
-export type WorkflowStep = 'upload' | 'analyzing' | 'confirm' | 'parsing' | 'done';
+export type WorkflowStep = 'upload' | 'review-sample' | 'analyzing' | 'confirm' | 'parsing' | 'done';

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { SpreadsheetViewer } from '@/components/SpreadsheetViewer';
 import { ColumnMappingToolbar } from '@/components/ColumnMappingToolbar';
+import { SampleReviewBar } from '@/components/SampleReviewBar';
 import { TenantTable } from '@/components/TenantTable';
 import { ActivityLog } from '@/components/ActivityLog';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
@@ -12,7 +13,10 @@ const Index = () => {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
     columnAliases, customGroups, sentSampleHtml,
-    loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
+    sampleRows, sampleCols, maxAvailableCols, totalRows,
+    setSampleRows, setSampleCols,
+    loadFile, sendSampleToAI,
+    handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
@@ -64,6 +68,31 @@ const Index = () => {
                 <FileUpload onFileSelect={loadFile} isProcessing={isProcessing} />
               </div>
             </div>
+          )}
+
+          {/* Review sample step — spreadsheet with selection overlay + sliders */}
+          {step === 'review-sample' && sheetData.length > 0 && (
+            <>
+              <div className="flex-1 min-h-0">
+                <SpreadsheetViewer
+                  data={sheetData}
+                  instruction={null}
+                  headerRows={headerRows}
+                  groupSpans={[]}
+                  sampleBounds={{ rows: sampleRows, cols: sampleCols }}
+                />
+              </div>
+              <SampleReviewBar
+                sampleRows={sampleRows}
+                sampleCols={sampleCols}
+                maxAvailableRows={Math.min(50, totalRows)}
+                maxAvailableCols={maxAvailableCols}
+                onRowsChange={setSampleRows}
+                onColsChange={setSampleCols}
+                onConfirmSend={sendSampleToAI}
+                isProcessing={isProcessing}
+              />
+            </>
           )}
 
           {(step === 'analyzing' || step === 'confirm') && sheetData.length > 0 && (
