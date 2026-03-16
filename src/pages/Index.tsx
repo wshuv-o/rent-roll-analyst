@@ -18,6 +18,7 @@ const Index = () => {
     loadFile, sendSampleToAI,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
+    buildColumnLabels,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
 

@@ -429,5 +429,6 @@ export function useRentRollParser() {
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
+    buildColumnLabels,
   };
 }
