@@ -34,6 +34,14 @@ const Index = () => {
           )}
         </div>
         <div className="flex items-center gap-3">
+          {sentSampleHtml && (
+            <button
+              onClick={() => setShowSentData(true)}
+              className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+            >
+              View Sent Data
+            </button>
+          )}
           {step !== 'upload' && (
             <button
               onClick={resetToUpload}
