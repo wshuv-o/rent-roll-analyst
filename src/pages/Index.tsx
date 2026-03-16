@@ -131,7 +131,7 @@ const Index = () => {
 
           {step === 'done' && tenants.length > 0 && (
             <div className="flex-1 overflow-y-auto p-4">
-              <TenantTable tenants={tenants} fileName={fileName} customGroups={customGroups} onBack={goBackToConfirm} />
+              <TenantTable tenants={tenants} fileName={fileName} instruction={instruction!} groupSpans={groupSpans} columnLabels={buildColumnLabels()} customGroups={customGroups} onBack={goBackToConfirm} />
             </div>
           )}
 
