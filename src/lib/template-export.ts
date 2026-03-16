@@ -508,17 +508,23 @@ function findChargeCode(entry: Record<string, string | number | null>): string |
 }
 
 function findChargeAmount(entry: Record<string, string | number | null>): number | null {
+  // Labels to skip — these identify the charge code, not the amount
+  const skipPatterns = ['code', 'type', 'description', 'desc', 'name'];
+
   for (const [label, val] of Object.entries(entry)) {
     const lower = label.toLowerCase();
-    if (lower.includes('amount') || lower.includes('charge') || lower.includes('monthly') || lower.includes('amt')) {
-      if (val === null || val === '') return null;
+    // Skip labels that are clearly charge-code identifiers
+    if (skipPatterns.some(p => lower.includes(p))) continue;
+    if (lower.includes('amount') || lower.includes('monthly') || lower.includes('amt') || lower.includes('charge')) {
+      if (val === null || val === '') continue;
       const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-      return isNaN(n) ? null : n;
+      if (!isNaN(n)) return n;
     }
   }
-  // Fallback: first numeric value that isn't a PSF
+  // Fallback: first numeric value that isn't a PSF or a code field
   for (const [label, val] of Object.entries(entry)) {
-    if (label.toLowerCase().includes('psf') || label.toLowerCase().includes('per')) continue;
+    const lower = label.toLowerCase();
+    if (lower.includes('psf') || lower.includes('per') || skipPatterns.some(p => lower.includes(p))) continue;
     if (val !== null && val !== '') {
       const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
       if (!isNaN(n)) return n;
