@@ -72,6 +72,8 @@ export function useRentRollParser() {
   // Custom groups created by user
   const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
 
+  const [sentSampleHtml, setSentSampleHtml] = useState<string | null>(null);
+
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
 
@@ -131,6 +133,7 @@ export function useRentRollParser() {
     addLog('system', `Anonymized sample: ${stats.names} names, ${stats.suites} suite IDs masked.`);
 
     const { html, contextNote, sampleRanges } = buildSample(anonymized, rows);
+    setSentSampleHtml(html);
     addLog('system', `Sample: ${sampleRanges}. Sending to AI...`);
 
     let instructionJson: ParsingInstruction | null = null;
@@ -377,6 +380,7 @@ export function useRentRollParser() {
     setLogs([]);
     setColumnAliases({});
     setCustomGroups([]);
+    setSentSampleHtml(null);
   }, []);
 
   const reAnalyze = useCallback(() => {
@@ -431,7 +435,7 @@ export function useRentRollParser() {
   return {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases, customGroups,
+    columnAliases, customGroups, sentSampleHtml,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,

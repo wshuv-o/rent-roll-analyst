@@ -1,19 +1,23 @@
+import { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { SpreadsheetViewer } from '@/components/SpreadsheetViewer';
 import { ColumnMappingToolbar } from '@/components/ColumnMappingToolbar';
 import { TenantTable } from '@/components/TenantTable';
 import { ActivityLog } from '@/components/ActivityLog';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
   
 const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
     sheetData, headerRows, instruction, groupSpans,
-    columnAliases, customGroups,
+    columnAliases, customGroups, sentSampleHtml,
     loadFile, handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
   } = useRentRollParser();
+
+  const [showSentData, setShowSentData] = useState(false);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -30,6 +34,14 @@ const Index = () => {
           )}
         </div>
         <div className="flex items-center gap-3">
+          {sentSampleHtml && (
+            <button
+              onClick={() => setShowSentData(true)}
+              className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+            >
+              View Sent Data
+            </button>
+          )}
           {step !== 'upload' && (
             <button
               onClick={resetToUpload}
@@ -108,6 +120,18 @@ const Index = () => {
           <ActivityLog entries={logs} />
         </div>
       </div>
+      <Dialog open={showSentData} onOpenChange={setShowSentData}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">Anonymized Data Sent to AI</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto text-xs font-mono">
+            {sentSampleHtml && (
+              <div dangerouslySetInnerHTML={{ __html: sentSampleHtml }} />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
