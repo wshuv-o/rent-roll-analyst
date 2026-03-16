@@ -123,18 +123,15 @@ export interface CustomGroup {
 export const CUSTOM_GROUP_HUES = [320, 190, 60, 100, 350, 230] as const;
 
 /**
- * New simplified TenantObject:
- * - suite_id & tenant_name stay top-level for identification
- * - All other data is collected per group as arrays of row entries
- * - Each row entry is a record of label → value
+ * TenantObject stores raw Excel rows directly.
+ * No string conversion — values are preserved as-is from the spreadsheet.
+ * The column mapping (ParsingInstruction) tells consumers which column holds which field.
  */
 export interface TenantObject {
   suite_id: string;
   tenant_name: string;
-  /** Scalar groups: single record of label→value */
-  scalars: Record<string, Record<string, string | number | null>>;
-  /** Collection groups: array of row entries, each label→value */
-  collections: Record<string, Record<string, string | number | null>[]>;
+  /** All raw rows belonging to this tenant, preserving original cell values and types */
+  rawRows: (string | number | null)[][];
   notes: string;
 }
 

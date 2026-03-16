@@ -1,26 +1,19 @@
 import * as XLSX from 'xlsx';
-import type { TenantObject, CustomGroup } from './types';
+import type { TenantObject, ParsingInstruction, GroupSpan, CustomGroup } from './types';
+import { colLetterToIndex, getCellValue, getRawCellValue } from './col-utils';
 
 /**
- * Templatized rent roll export.
- * 
- * Layout:
- * Fixed: Suite | Tenant | Lease Start | Lease End | Sqft | Monthly Base Rent | Annual Base Rent (formula) | Rent PSF | Total Other Charges (SUM formula) | Total Annual Other Charges (formula)
- * Current Charges: one column per unique charge code
- * Future Rent: per unique charge code, max_occurrences * 2 columns (Step Date N, Step Rate N), separated by blank columns
+ * Templatized rent roll export — reads directly from raw rows using column mapping.
+ * No heuristic string parsing. Values come straight from Excel cells.
  */
 
-// Color palette (ARGB hex strings for xlsx)
 const COLORS = {
-  headerBg: 'FF1B2A4A',       // dark navy
-  headerFont: 'FFFFFFFF',     // white
-  currentChargesBg: 'FF2D5F2D', // dark green
-  futureRentBg: 'FF5C3D1A',   // dark brown/orange
-  chargeCategoryBg: 'FF3A3A6A', // muted purple
-  dataBg: 'FF0D1117',         // very dark
-  altRowBg: 'FF161B22',       // slightly lighter
+  headerBg: 'FF1B2A4A',
+  headerFont: 'FFFFFFFF',
+  currentChargesBg: 'FF2D5F2D',
+  futureRentBg: 'FF5C3D1A',
+  chargeCategoryBg: 'FF3A3A6A',
   borderColor: 'FF30363D',
-  formulaFont: 'FF58A6FF',    // blue for formula cells
 };
 
 function colToRef(col: number, row: number): string {
@@ -48,17 +41,11 @@ function makeHeaderStyle(): Record<string, unknown> {
 }
 
 function makeChargeHeaderStyle(): Record<string, unknown> {
-  return {
-    ...makeHeaderStyle(),
-    fill: { fgColor: { rgb: COLORS.currentChargesBg }, patternType: 'solid' },
-  };
+  return { ...makeHeaderStyle(), fill: { fgColor: { rgb: COLORS.currentChargesBg }, patternType: 'solid' } };
 }
 
 function makeFutureHeaderStyle(): Record<string, unknown> {
-  return {
-    ...makeHeaderStyle(),
-    fill: { fgColor: { rgb: COLORS.futureRentBg }, patternType: 'solid' },
-  };
+  return { ...makeHeaderStyle(), fill: { fgColor: { rgb: COLORS.futureRentBg }, patternType: 'solid' } };
 }
 
 function makeCategoryStyle(bg: string): Record<string, unknown> {
@@ -75,94 +62,63 @@ function makeCategoryStyle(bg: string): Record<string, unknown> {
   };
 }
 
-/** Extract a numeric value from a label→value record for a given label substring match, with positional fallback */
-function findNumericValue(record: Record<string, string | number | null> | undefined, ...keywords: string[]): number | null {
-  if (!record) return null;
-  // Try keyword match first
-  for (const [label, val] of Object.entries(record)) {
-    const lower = label.toLowerCase();
-    if (keywords.some(k => lower.includes(k.toLowerCase()))) {
-      if (val === null || val === '') return null;
-      const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-      return isNaN(n) ? null : n;
-    }
-  }
-  // Fallback: return the first parseable numeric value
-  for (const [, val] of Object.entries(record)) {
-    if (val === null || val === '') continue;
-    const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-    if (!isNaN(n)) return n;
-  }
-  return null;
+/** Parse a raw cell value to number, stripping currency symbols */
+function toNumber(val: string | number | null): number {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return val;
+  const n = parseFloat(String(val).replace(/[,$%]/g, ''));
+  return isNaN(n) ? 0 : n;
 }
 
-/** Get the Nth numeric value from a record (0-indexed) */
-function findNthNumericValue(record: Record<string, string | number | null> | undefined, index: number): number | null {
-  if (!record) return null;
-  let count = 0;
-  for (const [, val] of Object.entries(record)) {
-    if (val === null || val === '') continue;
-    const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-    if (!isNaN(n)) {
-      if (count === index) return n;
-      count++;
-    }
-  }
-  return null;
+/** Get string from raw cell */
+function toStr(val: string | number | null): string {
+  if (val === null || val === undefined) return '';
+  return String(val).trim();
 }
 
-function findStringValue(record: Record<string, string | number | null> | undefined, ...keywords: string[]): string {
-  if (!record) return '';
-  // Try keyword match first
-  for (const [label, val] of Object.entries(record)) {
-    const lower = label.toLowerCase();
-    if (keywords.some(k => lower.includes(k.toLowerCase()))) {
-      return val !== null && val !== undefined ? String(val).trim() : '';
-    }
-  }
-  // Fallback: return the first non-empty string value
-  for (const [, val] of Object.entries(record)) {
-    if (val !== null && val !== undefined && String(val).trim()) return String(val).trim();
-  }
-  return '';
-}
+export function exportTemplatizedRentRoll(
+  tenants: TenantObject[],
+  fileName: string,
+  instruction: ParsingInstruction,
+  groupSpans: GroupSpan[],
+  columnLabels: Record<number, string>,
+  customGroups: CustomGroup[] = []
+): void {
+  const cm = instruction.column_map;
 
-/** Get the Nth non-empty string value from a record (0-indexed) */
-function findNthStringValue(record: Record<string, string | number | null> | undefined, index: number): string {
-  if (!record) return '';
-  let count = 0;
-  for (const [, val] of Object.entries(record)) {
-    const s = val !== null && val !== undefined ? String(val).trim() : '';
-    if (s) {
-      if (count === index) return s;
-      count++;
-    }
-  }
-  return '';
-}
+  // Column indices from mapping
+  const colIdx = {
+    leaseStart: colLetterToIndex(cm.lease_start),
+    leaseEnd: colLetterToIndex(cm.lease_end),
+    sqft: colLetterToIndex(cm.gla_sqft),
+    monthlyRent: colLetterToIndex(cm.monthly_base_rent),
+    rentPsf: colLetterToIndex(cm.base_rent_psf),
+    chargeCode: colLetterToIndex(cm.recurring_charge_code),
+    chargeAmount: colLetterToIndex(cm.recurring_charge_amount),
+    chargePsf: colLetterToIndex(cm.recurring_charge_psf),
+    futureDate: colLetterToIndex(cm.future_rent_date),
+    futureAmount: colLetterToIndex(cm.future_rent_amount),
+    futurePsf: colLetterToIndex(cm.future_rent_psf),
+  };
 
-export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: string, customGroups: CustomGroup[] = []): void {
-  // ─── 1. Gather unique charge codes from recurring charges ───
+  // ─── 1. Gather unique charge codes ───
   const chargeCodeSet = new Set<string>();
   for (const t of tenants) {
-    const entries = t.collections['charges'];
-    if (!entries) continue;
-    for (const entry of entries) {
-      const code = findChargeCode(entry);
+    for (const row of t.rawRows) {
+      const code = getCellValue(row, colIdx.chargeCode);
       if (code) chargeCodeSet.add(code);
     }
   }
   const chargeCodes = Array.from(chargeCodeSet).sort();
 
-  // ─── 2. Gather future rent steps per charge code and find max counts ───
-  const futureRentCodeMap = new Map<string, number>(); // code → max step count across tenants
+  // ─── 2. Gather future rent steps per charge code ───
+  const futureRentCodeMap = new Map<string, number>();
   for (const t of tenants) {
-    const entries = t.collections['future-rent'];
-    if (!entries) continue;
-    // Group by charge code within this tenant's future rent entries
     const codeCount = new Map<string, number>();
-    for (const entry of entries) {
-      const code = findChargeCode(entry) || 'RNT'; // default to RNT if no code
+    for (const row of t.rawRows) {
+      const date = getCellValue(row, colIdx.futureDate);
+      if (!date) continue;
+      const code = getCellValue(row, colIdx.chargeCode) || 'RNT';
       codeCount.set(code, (codeCount.get(code) || 0) + 1);
     }
     for (const [code, count] of codeCount) {
@@ -172,7 +128,6 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
   const futureRentCodes = Array.from(futureRentCodeMap.keys()).sort();
 
   // ─── 3. Build column layout ───
-  // Fixed columns (indices 0-9)
   const fixedHeaders = [
     'Suite', 'Tenant', 'Lease Start', 'Lease End', 'Sqft',
     'Monthly Base Rent', 'Annual Base Rent', 'Rent PSF',
@@ -180,55 +135,43 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
   ];
   const FIXED_COUNT = fixedHeaders.length;
 
-  // Current charges columns
   const chargeStartCol = FIXED_COUNT;
   const chargeColCount = chargeCodes.length;
 
-  // Future rent columns
   let futureStartCol = chargeStartCol + chargeColCount;
-  if (chargeColCount > 0) futureStartCol += 1; // blank separator
+  if (chargeColCount > 0) futureStartCol += 1;
 
-  // Build future rent code blocks: for each code, maxSteps * 2 columns + 1 blank separator
   const futureCodeBlocks: { code: string; startCol: number; steps: number }[] = [];
   let col = futureStartCol;
   for (const code of futureRentCodes) {
     const maxSteps = futureRentCodeMap.get(code) || 1;
     futureCodeBlocks.push({ code, startCol: col, steps: maxSteps });
-    col += maxSteps * 2 + 1; // +1 for blank separator
+    col += maxSteps * 2 + 1;
   }
 
   const totalCols = col > futureStartCol ? col - 1 : futureStartCol + (futureRentCodes.length > 0 ? 0 : -1);
 
-  // ─── 4. Build worksheet data ───
-  // Row 0: Category banner (merged cells)
-  // Row 1: Charge code banner for future rent
-  // Row 2: Sub-headers (Step Date 1, Step Rate 1, ...)
-  // Row 3+: Data rows
+  // ─── 4. Build worksheet ───
   const HEADER_ROWS = 3;
   const ws: XLSX.WorkSheet = {};
   const merges: XLSX.Range[] = [];
 
-  // Set column widths
   const colWidths: { wch: number }[] = [];
   for (let c = 0; c < Math.max(totalCols + 1, FIXED_COUNT + chargeColCount + 1); c++) {
-    if (c <= 1) colWidths.push({ wch: 20 }); // Suite, Tenant
-    else if (c <= 4) colWidths.push({ wch: 14 }); // dates, sqft
-    else if (c <= 9) colWidths.push({ wch: 18 }); // rent columns
+    if (c <= 1) colWidths.push({ wch: 20 });
+    else if (c <= 4) colWidths.push({ wch: 14 });
+    else if (c <= 9) colWidths.push({ wch: 18 });
     else colWidths.push({ wch: 14 });
   }
   ws['!cols'] = colWidths;
 
-  // ── Row 0: Category banner ──
-  // Fixed section header
+  // Row 0: Category banners
   for (let c = 0; c < FIXED_COUNT; c++) {
     ws[XLSX.utils.encode_cell({ r: 0, c })] = { v: '', s: makeHeaderStyle() };
   }
 
-  // "Current Charges" banner
   if (chargeColCount > 0) {
-    ws[XLSX.utils.encode_cell({ r: 0, c: chargeStartCol })] = {
-      v: 'Current Charges', s: makeCategoryStyle(COLORS.currentChargesBg),
-    };
+    ws[XLSX.utils.encode_cell({ r: 0, c: chargeStartCol })] = { v: 'Current Charges', s: makeCategoryStyle(COLORS.currentChargesBg) };
     if (chargeColCount > 1) {
       merges.push({ s: { r: 0, c: chargeStartCol }, e: { r: 0, c: chargeStartCol + chargeColCount - 1 } });
     }
@@ -237,25 +180,16 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     }
   }
 
-  // Future rent code banners on row 0 + row 1
   for (const block of futureCodeBlocks) {
     const blockWidth = block.steps * 2;
-    // Row 0: "Dynamic" or just the code category (CAM/TAX/etc)
-    const categoryLabel = getCategoryForCode(block.code);
-    ws[XLSX.utils.encode_cell({ r: 0, c: block.startCol })] = {
-      v: categoryLabel, s: makeCategoryStyle(COLORS.futureRentBg),
-    };
+    ws[XLSX.utils.encode_cell({ r: 0, c: block.startCol })] = { v: block.code, s: makeCategoryStyle(COLORS.futureRentBg) };
     if (blockWidth > 1) {
       merges.push({ s: { r: 0, c: block.startCol }, e: { r: 0, c: block.startCol + blockWidth - 1 } });
     }
     for (let c = block.startCol + 1; c < block.startCol + blockWidth; c++) {
       ws[XLSX.utils.encode_cell({ r: 0, c })] = { v: '', s: makeCategoryStyle(COLORS.futureRentBg) };
     }
-
-    // Row 1: Charge code repeated
-    ws[XLSX.utils.encode_cell({ r: 1, c: block.startCol })] = {
-      v: block.code, s: makeCategoryStyle(COLORS.chargeCategoryBg),
-    };
+    ws[XLSX.utils.encode_cell({ r: 1, c: block.startCol })] = { v: block.code, s: makeCategoryStyle(COLORS.chargeCategoryBg) };
     if (blockWidth > 1) {
       merges.push({ s: { r: 1, c: block.startCol }, e: { r: 1, c: block.startCol + blockWidth - 1 } });
     }
@@ -264,35 +198,24 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
     }
   }
 
-  // ── Row 2: Column headers ──
-  // Fixed headers
+  // Row 2: Column headers
   for (let c = 0; c < FIXED_COUNT; c++) {
     ws[XLSX.utils.encode_cell({ r: 2, c })] = { v: fixedHeaders[c], s: makeHeaderStyle() };
   }
-  // Merge fixed headers across rows 0-1 (they span the category rows)
   for (let c = 0; c < FIXED_COUNT; c++) {
     merges.push({ s: { r: 0, c }, e: { r: 1, c } });
   }
-
-  // Charge code headers
   for (let i = 0; i < chargeCodes.length; i++) {
     const c = chargeStartCol + i;
     ws[XLSX.utils.encode_cell({ r: 2, c })] = { v: chargeCodes[i], s: makeChargeHeaderStyle() };
-    // Merge row 1 for charge codes
     ws[XLSX.utils.encode_cell({ r: 1, c })] = { v: '', s: makeChargeHeaderStyle() };
   }
-
-  // Future rent step headers
   for (const block of futureCodeBlocks) {
     for (let s = 0; s < block.steps; s++) {
       const dateCol = block.startCol + s * 2;
       const rateCol = block.startCol + s * 2 + 1;
-      ws[XLSX.utils.encode_cell({ r: 2, c: dateCol })] = {
-        v: `Step Date ${s + 1}`, s: makeFutureHeaderStyle(),
-      };
-      ws[XLSX.utils.encode_cell({ r: 2, c: rateCol })] = {
-        v: `Step Rate ${s + 1}`, s: makeFutureHeaderStyle(),
-      };
+      ws[XLSX.utils.encode_cell({ r: 2, c: dateCol })] = { v: `Step Date ${s + 1}`, s: makeFutureHeaderStyle() };
+      ws[XLSX.utils.encode_cell({ r: 2, c: rateCol })] = { v: `Step Rate ${s + 1}`, s: makeFutureHeaderStyle() };
     }
   }
 
@@ -300,76 +223,54 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
   for (let ti = 0; ti < tenants.length; ti++) {
     const t = tenants[ti];
     const r = HEADER_ROWS + ti;
+    const primaryRow = t.rawRows[0] || [];
 
-    // Fixed columns
+    // Fixed columns — read directly from raw cells
     ws[XLSX.utils.encode_cell({ r, c: 0 })] = { v: t.suite_id };
     ws[XLSX.utils.encode_cell({ r, c: 1 })] = { v: t.tenant_name };
+    ws[XLSX.utils.encode_cell({ r, c: 2 })] = { v: toStr(getRawCellValue(primaryRow, colIdx.leaseStart)) };
+    ws[XLSX.utils.encode_cell({ r, c: 3 })] = { v: toStr(getRawCellValue(primaryRow, colIdx.leaseEnd)) };
+    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: toNumber(getRawCellValue(primaryRow, colIdx.sqft)), t: 'n' };
 
-    // Lease dates from scalar group
-    const leaseData = t.scalars['lease'];
-    ws[XLSX.utils.encode_cell({ r, c: 2 })] = { v: findStringValue(leaseData, 'start', 'begin', 'commence') };
-    ws[XLSX.utils.encode_cell({ r, c: 3 })] = { v: findStringValue(leaseData, 'end', 'expire', 'expir', 'terminat') };
-
-    // Space
-    const spaceData = t.scalars['space'];
-    const sqft = findNumericValue(spaceData, 'gla', 'sqft', 'sf', 'area', 'size', 'nra');
-    ws[XLSX.utils.encode_cell({ r, c: 4 })] = { v: sqft ?? 0, t: 'n' };
-
-    // Base rent — first numeric = monthly rent, second = PSF
-    const rentData = t.scalars['base-rent'];
-    const monthlyRent = findNthNumericValue(rentData, 0);
-    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent ?? 0, t: 'n' };
+    const monthlyRent = toNumber(getRawCellValue(primaryRow, colIdx.monthlyRent));
+    ws[XLSX.utils.encode_cell({ r, c: 5 })] = { v: monthlyRent, t: 'n' };
 
     // Annual Base Rent = Monthly * 12 (formula)
-    const monthlyRef = colToRef(5, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${monthlyRef}*12`, t: 'n' };
+    ws[XLSX.utils.encode_cell({ r, c: 6 })] = { f: `${colToRef(5, r + 1)}*12`, t: 'n' };
 
-    // Rent PSF — second numeric value in base-rent
-    const rentPsf = findNthNumericValue(rentData, 1);
-    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: rentPsf ?? 0, t: 'n' };
+    ws[XLSX.utils.encode_cell({ r, c: 7 })] = { v: toNumber(getRawCellValue(primaryRow, colIdx.rentPsf)), t: 'n' };
 
-    // Current charges — fill per code
-    const chargeEntries = t.collections['charges'] || [];
+    // Current charges — read code and amount directly from raw rows
     const chargeByCode: Record<string, number> = {};
-    for (const entry of chargeEntries) {
-      const code = findChargeCode(entry);
+    for (const row of t.rawRows) {
+      const code = getCellValue(row, colIdx.chargeCode);
       if (!code) continue;
-      const amt = findChargeAmount(entry);
-      if (amt !== null) {
-        chargeByCode[code] = (chargeByCode[code] || 0) + amt;
-      }
+      const amt = toNumber(getRawCellValue(row, colIdx.chargeAmount));
+      chargeByCode[code] = (chargeByCode[code] || 0) + amt;
     }
-
     for (let i = 0; i < chargeCodes.length; i++) {
       const c = chargeStartCol + i;
       ws[XLSX.utils.encode_cell({ r, c })] = { v: chargeByCode[chargeCodes[i]] ?? 0, t: 'n' };
     }
 
-    // Total Other Charges = SUM of charge columns (formula)
+    // Total Other Charges (formula)
     if (chargeColCount > 0) {
-      const firstChargeRef = colToRef(chargeStartCol, r + 1);
-      const lastChargeRef = colToRef(chargeStartCol + chargeColCount - 1, r + 1);
-      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${firstChargeRef}:${lastChargeRef})`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: 8 })] = { f: `SUM(${colToRef(chargeStartCol, r + 1)}:${colToRef(chargeStartCol + chargeColCount - 1, r + 1)})`, t: 'n' };
     } else {
       ws[XLSX.utils.encode_cell({ r, c: 8 })] = { v: 0, t: 'n' };
     }
+    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${colToRef(8, r + 1)}*12`, t: 'n' };
 
-    // Total Annual Other Charges = Total Other Charges * 12 (formula)
-    const totalChargesRef = colToRef(8, r + 1);
-    ws[XLSX.utils.encode_cell({ r, c: 9 })] = { f: `${totalChargesRef}*12`, t: 'n' };
-
-    // Future rent steps
-    const futureEntries = t.collections['future-rent'] || [];
-    // Group future entries by charge code
-    const futureByCode: Record<string, { date: string; rate: number | null }[]> = {};
-    for (const entry of futureEntries) {
-      const code = findChargeCode(entry) || 'RNT';
+    // Future rent steps — group by charge code
+    const futureByCode: Record<string, { date: string; amount: number }[]> = {};
+    for (const row of t.rawRows) {
+      const date = getCellValue(row, colIdx.futureDate);
+      if (!date) continue;
+      const code = getCellValue(row, colIdx.chargeCode) || 'RNT';
       if (!futureByCode[code]) futureByCode[code] = [];
-      const date = findStringValue(entry, 'date', 'effective', 'start');
-      const rate = findNumericValue(entry, 'psf', 'rate', 'amount', 'rent');
-      futureByCode[code].push({ date, rate });
+      const amount = toNumber(getRawCellValue(row, colIdx.futureAmount));
+      futureByCode[code].push({ date, amount });
     }
-
     for (const block of futureCodeBlocks) {
       const steps = futureByCode[block.code] || [];
       for (let s = 0; s < block.steps; s++) {
@@ -377,15 +278,13 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
         const rateCol = block.startCol + s * 2 + 1;
         if (s < steps.length) {
           ws[XLSX.utils.encode_cell({ r, c: dateCol })] = { v: steps[s].date };
-          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].rate ?? 0, t: 'n' };
+          ws[XLSX.utils.encode_cell({ r, c: rateCol })] = { v: steps[s].amount, t: 'n' };
         }
       }
     }
   }
 
   // ── Custom group columns ──
-  // Gather unique labels per custom group across all tenants
-  const customGroupColumns: { group: CustomGroup; labels: string[]; startCol: number }[] = [];
   let customStartCol = Math.max(
     FIXED_COUNT,
     chargeStartCol + chargeColCount + (chargeColCount > 0 ? 1 : 0),
@@ -393,69 +292,65 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
   );
 
   for (const cg of customGroups) {
-    const labelSet = new Set<string>();
-    for (const t of tenants) {
-      const data = cg.collection ? t.collections[cg.id] : (t.scalars[cg.id] ? [t.scalars[cg.id]] : []);
-      if (data) {
-        for (const entry of data) {
-          for (const label of Object.keys(entry)) {
-            labelSet.add(label);
-          }
-        }
-      }
+    const span = groupSpans.find(s => s.groupId === cg.id);
+    if (!span) continue;
+
+    // Collect column labels within the span
+    const labels: string[] = [];
+    const colIndices: number[] = [];
+    for (let c = span.startCol; c <= span.endCol; c++) {
+      labels.push(columnLabels[c] || String.fromCharCode(65 + c));
+      colIndices.push(c);
     }
-    const labels = Array.from(labelSet);
     if (labels.length === 0) continue;
 
-    customGroupColumns.push({ group: cg, labels, startCol: customStartCol });
-
     // Row 0: Category banner
-    ws[XLSX.utils.encode_cell({ r: 0, c: customStartCol })] = {
-      v: cg.label, s: makeCategoryStyle(COLORS.chargeCategoryBg),
-    };
+    ws[XLSX.utils.encode_cell({ r: 0, c: customStartCol })] = { v: cg.label, s: makeCategoryStyle(COLORS.chargeCategoryBg) };
     if (labels.length > 1) {
       merges.push({ s: { r: 0, c: customStartCol }, e: { r: 0, c: customStartCol + labels.length - 1 } });
     }
     for (let i = 1; i < labels.length; i++) {
       ws[XLSX.utils.encode_cell({ r: 0, c: customStartCol + i })] = { v: '', s: makeCategoryStyle(COLORS.chargeCategoryBg) };
     }
-
-    // Row 1: empty
     for (let i = 0; i < labels.length; i++) {
       ws[XLSX.utils.encode_cell({ r: 1, c: customStartCol + i })] = { v: '', s: makeHeaderStyle() };
     }
-
-    // Row 2: Column headers
     for (let i = 0; i < labels.length; i++) {
       ws[XLSX.utils.encode_cell({ r: 2, c: customStartCol + i })] = { v: labels[i], s: makeHeaderStyle() };
     }
 
-    // Data rows
+    // Data rows — read raw values directly
     for (let ti = 0; ti < tenants.length; ti++) {
       const t = tenants[ti];
-      const r = HEADER_ROWS + ti;
+      const r = 3 + ti;
 
       if (cg.collection) {
-        // For collections, concatenate values with semicolons
-        const entries = t.collections[cg.id] || [];
-        for (let li = 0; li < labels.length; li++) {
-          const values = entries.map(e => e[labels[li]]).filter(v => v !== null && v !== undefined && String(v).trim() !== '');
-          const combined = values.map(v => String(v).trim()).join('; ');
-          const numVal = parseFloat(String(combined).replace(/[,$]/g, ''));
-          if (values.length === 1 && !isNaN(numVal)) {
-            ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: numVal, t: 'n' };
-          } else {
-            ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: combined };
+        // Concatenate values from all rows
+        for (let li = 0; li < colIndices.length; li++) {
+          const values = t.rawRows
+            .map(row => getRawCellValue(row, colIndices[li]))
+            .filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+          if (values.length === 1) {
+            const v = values[0]!;
+            const num = typeof v === 'number' ? v : parseFloat(String(v).replace(/[,$]/g, ''));
+            if (!isNaN(num)) {
+              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: num, t: 'n' };
+            } else {
+              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: String(v) };
+            }
+          } else if (values.length > 1) {
+            ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: values.map(v => String(v).trim()).join('; ') };
           }
         }
       } else {
-        const entry = t.scalars[cg.id];
-        for (let li = 0; li < labels.length; li++) {
-          const val = entry ? entry[labels[li]] : null;
+        // Scalar: first row only
+        const row = t.rawRows[0] || [];
+        for (let li = 0; li < colIndices.length; li++) {
+          const val = getRawCellValue(row, colIndices[li]);
           if (val !== null && val !== undefined && String(val).trim()) {
-            const numVal = parseFloat(String(val).replace(/[,$]/g, ''));
-            if (!isNaN(numVal)) {
-              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: numVal, t: 'n' };
+            const num = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
+            if (!isNaN(num)) {
+              ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: num, t: 'n' };
             } else {
               ws[XLSX.utils.encode_cell({ r, c: customStartCol + li })] = { v: String(val).trim() };
             }
@@ -464,78 +359,24 @@ export function exportTemplatizedRentRoll(tenants: TenantObject[], fileName: str
       }
     }
 
-    customStartCol += labels.length + 1; // +1 blank separator
+    customStartCol += labels.length + 1;
   }
 
-  // Set merges
   ws['!merges'] = merges;
 
-  // Set range
-  const maxRow = HEADER_ROWS + tenants.length - 1;
+  const maxRow = 3 + tenants.length - 1;
   const maxCol = Math.max(
     FIXED_COUNT - 1,
     chargeStartCol + chargeColCount - 1,
     ...futureCodeBlocks.map(b => b.startCol + b.steps * 2 - 1),
-    ...customGroupColumns.map(cg => cg.startCol + cg.labels.length - 1),
+    customStartCol - 2,
     0
   );
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(maxRow, 2), c: Math.max(maxCol, FIXED_COUNT - 1) } });
 
-  // Create workbook
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Templatized Rent Roll');
 
   const outputName = fileName.replace(/\.(xlsx|xls)$/i, '') + '_template.xlsx';
   XLSX.writeFile(wb, outputName);
-}
-
-// ─── Helpers to extract values from label→value records ───
-
-function findChargeCode(entry: Record<string, string | number | null>): string | null {
-  for (const [label, val] of Object.entries(entry)) {
-    const lower = label.toLowerCase();
-    if (lower.includes('code') || lower.includes('type') || lower.includes('charge code') || lower.includes('description')) {
-      if (val !== null && val !== '') return String(val).trim();
-    }
-  }
-  // Fallback: if there's a short uppercase string, it might be the code
-  for (const [, val] of Object.entries(entry)) {
-    if (val !== null && typeof val === 'string' && val.length <= 6 && val === val.toUpperCase() && /^[A-Z]+$/.test(val)) {
-      return val;
-    }
-  }
-  return null;
-}
-
-function findChargeAmount(entry: Record<string, string | number | null>): number | null {
-  // Labels to skip — these identify the charge code, not the amount
-  const skipPatterns = ['code', 'type', 'description', 'desc', 'name'];
-
-  for (const [label, val] of Object.entries(entry)) {
-    const lower = label.toLowerCase();
-    // Skip labels that are clearly charge-code identifiers
-    if (skipPatterns.some(p => lower.includes(p))) continue;
-    if (lower.includes('amount') || lower.includes('monthly') || lower.includes('amt') || lower.includes('charge')) {
-      if (val === null || val === '') continue;
-      const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-      if (!isNaN(n)) return n;
-    }
-  }
-  // Fallback: first numeric value that isn't a PSF or a code field
-  for (const [label, val] of Object.entries(entry)) {
-    const lower = label.toLowerCase();
-    if (lower.includes('psf') || lower.includes('per') || skipPatterns.some(p => lower.includes(p))) continue;
-    if (val !== null && val !== '') {
-      const n = typeof val === 'number' ? val : parseFloat(String(val).replace(/[,$]/g, ''));
-      if (!isNaN(n)) return n;
-    }
-  }
-  return null;
-}
-
-function getCategoryForCode(code: string): string {
-  const upper = code.toUpperCase();
-  if (['TAX', 'PROPTAX', 'RETAX'].includes(upper)) return 'TAX';
-  if (['CAM', 'CTOC', 'MKT', 'STO', 'HVAC', 'INS', 'RNT', 'BOFC'].includes(upper)) return upper;
-  return code;
 }

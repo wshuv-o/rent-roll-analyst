@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
-import type { TenantObject } from './types';
+import type { TenantObject, ParsingInstruction, GroupSpan } from './types';
 import { COLUMN_GROUPS } from './types';
+import { colLetterToIndex, getCellValue, indexToColLetter } from './col-utils';
 
 export function readExcelFile(file: File): Promise<{
   data: (string | number | null)[][];
@@ -40,39 +41,59 @@ export function readExcelFile(file: File): Promise<{
   });
 }
 
-export function exportToExcel(tenants: TenantObject[], fileName: string): void {
-  const scalarGroupDefs = COLUMN_GROUPS.filter(g => g.id !== 'identity' && !g.collection);
-  const collectionGroupDefs = COLUMN_GROUPS.filter(g => g.collection);
+export function exportToExcel(
+  tenants: TenantObject[],
+  fileName: string,
+  instruction: ParsingInstruction,
+  groupSpans: GroupSpan[],
+  columnLabels: Record<number, string>
+): void {
+  const cm = instruction.column_map;
 
-  // Check which groups have data
-  const scalarIds = new Set<string>();
-  const collectionIds = new Set<string>();
-  for (const t of tenants) {
-    for (const gid of Object.keys(t.scalars)) scalarIds.add(gid);
-    for (const gid of Object.keys(t.collections)) collectionIds.add(gid);
-  }
-
-  const activeScalars = scalarGroupDefs.filter(g => scalarIds.has(g.id));
-  const activeCollections = collectionGroupDefs.filter(g => collectionIds.has(g.id));
-
-  const serializeRecord = (rec: Record<string, string | number | null>) =>
-    Object.entries(rec)
-      .filter(([, v]) => v !== null && v !== '')
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(' | ');
-
+  // Build rows from raw data using column mapping
   const rows = tenants.map(t => {
+    const primaryRow = t.rawRows[0] || [];
     const base: Record<string, unknown> = {
       'Suite ID': t.suite_id,
       'Tenant Name': t.tenant_name,
     };
-    for (const g of activeScalars) {
-      base[g.label] = t.scalars[g.id] ? serializeRecord(t.scalars[g.id]) : '';
+
+    // Scalar groups
+    for (const group of COLUMN_GROUPS.filter(g => g.id !== 'identity' && !g.collection)) {
+      const span = groupSpans.find(s => s.groupId === group.id);
+      if (!span) continue;
+      const parts: string[] = [];
+      for (let c = span.startCol; c <= span.endCol; c++) {
+        const label = columnLabels[c] || indexToColLetter(c);
+        const val = c < primaryRow.length ? primaryRow[c] : null;
+        if (val !== null && val !== undefined && String(val).trim()) {
+          parts.push(`${label}: ${String(val).trim()}`);
+        }
+      }
+      base[group.label] = parts.join(' | ');
     }
-    for (const g of activeCollections) {
-      const entries = t.collections[g.id];
-      base[g.label] = entries ? entries.map(serializeRecord).join('; ') : '';
+
+    // Collection groups
+    for (const group of COLUMN_GROUPS.filter(g => g.collection)) {
+      const span = groupSpans.find(s => s.groupId === group.id);
+      if (!span) continue;
+      const entries: string[] = [];
+      for (const row of t.rawRows) {
+        const parts: string[] = [];
+        let hasData = false;
+        for (let c = span.startCol; c <= span.endCol; c++) {
+          const label = columnLabels[c] || indexToColLetter(c);
+          const val = c < row.length ? row[c] : null;
+          if (val !== null && val !== undefined && String(val).trim()) {
+            parts.push(`${label}: ${String(val).trim()}`);
+            hasData = true;
+          }
+        }
+        if (hasData) entries.push(parts.join(' | '));
+      }
+      base[group.label] = entries.join('; ');
     }
+
     base['Notes'] = t.notes;
     return base;
   });
