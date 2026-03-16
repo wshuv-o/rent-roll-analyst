@@ -1,6 +1,6 @@
 import type { LogType } from './types';
 
-const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-rent-roll`;
+const CHAT_URL = `${import.meta.env.VITE_API_BASE_URL}/api/analyze-rent-roll`;
 
 export interface StreamCallbacks {
   onSection: (type: LogType, text: string) => void;
@@ -19,7 +19,7 @@ export async function streamAnalysis(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      Authorization: `Bearer ${import.meta.env.VITE_API_KEY}`,
     },
     body: JSON.stringify({ sampleHtml, contextNote }),
   });
