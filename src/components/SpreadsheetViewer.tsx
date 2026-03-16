@@ -66,6 +66,7 @@ export function SpreadsheetViewer({
   groupSpans,
   customGroups = [],
   columnAliases = {},
+  sampleBounds,
   onColumnAssign,
   onCustomFieldAssign,
   onGroupResize,
