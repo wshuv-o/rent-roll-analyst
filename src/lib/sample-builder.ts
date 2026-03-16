@@ -7,11 +7,9 @@ export function buildSample(
   data: (string | number | null)[][],
   totalRows: number
 ): { html: string; contextNote: string; sampleRanges: string } {
-  const firstEnd = Math.min(30, totalRows);
-  const lastStart = Math.max(firstEnd, totalRows - 10);
+  const firstEnd = Math.min(15, totalRows);
 
   const topRows = data.slice(0, firstEnd);
-  const bottomRows = totalRows > firstEnd ? data.slice(lastStart) : [];
 
   const maxCols = data.reduce((max, row) => Math.max(max, row.length), 0);
 
