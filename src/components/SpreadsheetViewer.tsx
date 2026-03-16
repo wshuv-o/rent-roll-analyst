@@ -386,6 +386,7 @@ export function SpreadsheetViewer({
                       const cg = groupId ? customGroups.find(g => g.id === groupId) : null;
                       const cgIdx = cg ? customGroups.indexOf(cg) : 0;
                       const colors = builtinColors || (cg ? getCustomGroupColors(cgIdx) : null);
+                      const outsideSample = sampleBounds && (rowIdx >= sampleBounds.rows || c >= sampleBounds.cols);
                       return (
                         <td
                           key={c}
@@ -393,8 +394,9 @@ export function SpreadsheetViewer({
                             colors ? colors.bg : ''
                           } ${isHeader ? 'font-semibold text-foreground' : 'text-foreground/80'} ${
                             colors ? `border-l ${colors.border}/30` : ''
-                          }`}
+                          } ${outsideSample ? 'opacity-20' : ''}`}
                           title={val !== null && val !== undefined ? String(val) : ''}
+                          style={outsideSample ? { background: 'hsl(var(--muted) / 0.3)' } : undefined}
                         >
                           {val !== null && val !== undefined ? String(val) : ''}
                         </td>
