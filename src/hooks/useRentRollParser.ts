@@ -6,29 +6,11 @@ import { anonymizeSheet, detectHeaderRows } from '@/lib/anonymizer';
 import { buildSample } from '@/lib/sample-builder';
 import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
+import { indexToColLetter, colLetterToIndex } from '@/lib/col-utils';
 
 let logIdCounter = 0;
 
-function indexToColLetter(idx: number): string {
-  let letter = '';
-  let n = idx;
-  while (n >= 0) {
-    letter = String.fromCharCode(65 + (n % 26)) + letter;
-    n = Math.floor(n / 26) - 1;
-  }
-  return letter;
-}
-
-function colLetterToIdx(letter: string): number {
-  if (!letter) return -1;
-  const upper = letter.toUpperCase().trim().replace(/[^A-Z]/g, '');
-  if (!upper) return -1;
-  let index = 0;
-  for (let i = 0; i < upper.length; i++) {
-    index = index * 26 + (upper.charCodeAt(i) - 64);
-  }
-  return index - 1;
-}
+const colLetterToIdx = colLetterToIndex;
 
 // Derive group spans from instruction's column_map
 function deriveGroupSpans(instruction: ParsingInstruction): GroupSpan[] {
