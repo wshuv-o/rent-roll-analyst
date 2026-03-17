@@ -8,12 +8,20 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    allowedHosts: ["dynamic-rentroll.bulkscraper.cloud"], // for dev
     hmr: {
       overlay: false,
     },
   },
-  allowedHosts: ["dynamic-rentroll.bulkscraper.cloud"],
+
+  preview: {
+    host: "::",
+    port: 8080,
+    allowedHosts: ["dynamic-rentroll.bulkscraper.cloud"], // 🔥 THIS is what you need
+  },
+
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
