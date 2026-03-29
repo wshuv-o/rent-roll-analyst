@@ -1,6 +1,7 @@
 // src/components/TenancyScheduleTable.tsx
 import { useMemo } from 'react';
 import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
+import * as XLSX from 'xlsx';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -388,29 +389,46 @@ const COLS: ColDef[] = [
   { key: 'annualGrossAmount',      label: 'Annual Gross',       group: 'schedule', right: true },
 ];
 
-// ─── CSV export ───────────────────────────────────────────────────────────────
+// ─── Excel export ─────────────────────────────────────────────────────────────
 
-function toCSV(rows: FlatRow[]): string {
-  const header = COLS.map(c => `"${c.label}"`).join(',');
-  const body = rows.map(row =>
-    COLS.map(c => {
-      const v = row[c.key];
-      const s = fmt(v as Cell);
-      return `"${s.replace(/"/g, '""')}"`;
-    }).join(',')
+function downloadXLSX(rows: FlatRow[], fileName: string) {
+  // Build worksheet data: header row first, then data rows.
+  // Raw numbers/dates are passed as native types so Excel formats them properly.
+  const header = COLS.map(c => c.label);
+
+  const wsData: (string | number | Date | null)[][] = [header];
+
+  for (const row of rows) {
+    wsData.push(
+      COLS.map(col => {
+        const v = row[col.key];
+        if (col.key === '_isSplit') return null;
+        // Dates: pass as JS Date so SheetJS encodes as Excel serial date
+        if (v instanceof Date) return v;
+        // Numbers: pass raw so Excel keeps them numeric (sortable, formattable)
+        if (typeof v === 'number') return v;
+        // Everything else: formatted string
+        return fmt(v as Cell) || null;
+      })
+    );
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true });
+
+  // Column widths — generous defaults, narrower for numeric cols
+  const colWidths = COLS.map(col =>
+    col.right ? { wch: 14 } : col.key === 'property' ? { wch: 38 } : { wch: 18 }
   );
-  return [header, ...body].join('\n');
-}
+  ws['!cols'] = colWidths;
 
-function downloadCSV(rows: FlatRow[], fileName: string) {
-  const csv = toCSV(rows);
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName.replace(/\.[^.]+$/, '') + '_extracted.csv';
-  a.click();
-  URL.revokeObjectURL(url);
+  // Freeze the two header rows
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Rent Roll');
+
+  const outName = fileName.replace(/\.[^.]+$/, '') + '_extracted.xlsx';
+  XLSX.writeFile(wb, outName);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -448,10 +466,10 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
           </span>
         </div>
         <button
-          onClick={() => downloadCSV(rows, fileName)}
+          onClick={() => downloadXLSX(rows, fileName)}
           className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
         >
-          ↓ Download CSV
+          ↓ Download Excel
         </button>
       </div>
 
