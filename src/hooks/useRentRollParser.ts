@@ -84,6 +84,9 @@ export function useRentRollParser() {
   const [sentSampleHtml, setSentSampleHtml] = useState<string | null>(null);
   const [selectedRentRollType, setSelectedRentRollType] = useState<string | null>(null);
 
+  // Rich tenancy-schedule result (kept separate from the downcast TenantObject[])
+  const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
+
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
 
@@ -101,7 +104,7 @@ export function useRentRollParser() {
     setLogs(prev => prev.map(l => l.id === id ? { ...l, message: l.message + text } : l));
   }, []);
 
-  // Step 1: Load file → go to review-sample
+  // Step 1: Load file → go to type-confirm
   const loadFile = useCallback(async (file: File) => {
     setIsProcessing(true);
     setTenants([]);
@@ -135,7 +138,6 @@ export function useRentRollParser() {
     setHeaderRows(headerRowIndices);
     addLog('system', `${rows} rows loaded. Detected header rows: ${headerRowIndices.map(i => i + 1).join(', ')}`);
 
-    // Compute effective column count (last non-empty column across first 50 rows)
     const effCols = computeEffectiveCols(data, MAX_SAMPLE_ROWS);
     const totalCols = data.reduce((max, row) => Math.max(max, row.length), 0);
     setMaxAvailableCols(Math.min(totalCols, MAX_SAMPLE_COLS));
@@ -146,16 +148,12 @@ export function useRentRollParser() {
     setIsProcessing(false);
   }, [addLog]);
 
-  // Tenancy schedule result (separate from regular TenantObject[])
-  const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
-
   // Step 1b: User selects rent roll type → branch by type
   const confirmRentRollType = useCallback((typeId: string) => {
     setSelectedRentRollType(typeId);
 
     if (typeId === 'tenancy-schedule') {
-      // Tenancy schedule: skip AI, parse directly with hardcoded rules
-      addLog('system', `Rent roll type selected: Tenancy Schedule. Parsing with built-in rules...`);
+      addLog('system', 'Rent roll type selected: Tenancy Schedule. Parsing with built-in rules...');
       setStep('parsing');
       setIsProcessing(true);
 
@@ -164,25 +162,47 @@ export function useRentRollParser() {
       setTenancyScheduleTenants(result);
 
       // Convert to TenantObject[] for the existing TenantTable display.
-      // Main row keys are dynamic (from merged headers), so find the right ones.
+      //
+      // Main row keys come directly from the merged column headers detected in the
+      // sheet (e.g. "Property", "Unit(s)", "Lease"). We look them up by those exact
+      // names so we never accidentally key into mr[''] and get undefined.
+      //
+      // Known header labels from this format (Book2.xlsx / Tenancy Schedule I):
+      //   "Property" → building address
+      //   "Unit(s)"  → unit number  → suite_id
+      //   "Lease"    → tenant name  → tenant_name
       const converted: TenantObject[] = result.map(t => {
         const mr = t.mainRow;
-        // Find the unit and tenant name by looking for common header labels
-        const unitKey = Object.keys(mr).find(k => /unit/i.test(k)) || '';
-        const leaseKey = Object.keys(mr).find(k => /lease(?!.*type|.*from|.*to)/i.test(k)) || '';
+
+        // Look up unit value: prefer exact known key, then broad fallback
+        const unitVal =
+          mr['Unit(s)'] ??
+          mr['Unit'] ??
+          Object.entries(mr).find(([k]) => /\bunit\b/i.test(k))?.[1] ??
+          null;
+
+        // Look up lease/tenant value: avoid "Lease Type", "Lease From", "Lease To", "Term"
+        const leaseVal =
+          mr['Lease'] ??
+          Object.entries(mr).find(
+            ([k]) => /\blease\b/i.test(k) && !/type|from|to|term/i.test(k)
+          )?.[1] ??
+          null;
+
         return {
-          suite_id: String(mr[unitKey] ?? ''),
-          tenant_name: String(mr[leaseKey] ?? ''),
+          suite_id:    unitVal  !== null && unitVal  !== undefined ? String(unitVal)  : '',
+          tenant_name: leaseVal !== null && leaseVal !== undefined ? String(leaseVal) : '',
           rawRows: t.rawRows,
           notes: '',
         };
       });
-      setTenants(converted);
 
+      setTenants(converted);
       setStep('done');
       setIsProcessing(false);
+
     } else {
-      // Regular: go through AI flow
+      // Regular rent roll: go through AI flow
       addLog('system', `Rent roll type selected: ${typeId}. Adjust sample area then click "Send to AI".`);
       setStep('review-sample');
     }
@@ -254,7 +274,7 @@ export function useRentRollParser() {
     addLog('system', 'Review the highlighted columns. Drag group edges to adjust, click column headers to assign fields, then "Confirm & Parse".');
   }, [headerRows, totalRows, sampleRows, sampleCols, addLog, updateLog, appendToLog]);
 
-  // Handle group span resize (dragging edges).
+  // Handle group span resize (dragging edges)
   const handleGroupResize = useCallback((groupId: ColumnGroupId | string, newStartCol: number, newEndCol: number) => {
     setGroupSpans(prev => {
       const updated = prev.map(s =>
@@ -439,13 +459,24 @@ export function useRentRollParser() {
     setTenants([]);
     setColumnAliases({});
     setCustomGroups([]);
-    // Go back to review-sample so user can adjust bounds before re-sending
-    setStep('review-sample');
-  }, []);
+    // For tenancy-schedule, go back to type-confirm (no AI sample review needed).
+    // For regular rent rolls, go back to review-sample to adjust bounds.
+    if (selectedRentRollType === 'tenancy-schedule') {
+      setStep('type-confirm');
+    } else {
+      setStep('review-sample');
+    }
+  }, [selectedRentRollType]);
 
   const goBackToConfirm = useCallback(() => {
-    setStep('confirm');
-  }, []);
+    // For tenancy-schedule there is no 'confirm' (AI column mapping) step.
+    // Send the user back to type selection so they can re-parse or switch type.
+    if (selectedRentRollType === 'tenancy-schedule') {
+      setStep('type-confirm');
+    } else {
+      setStep('confirm');
+    }
+  }, [selectedRentRollType]);
 
   return {
     logs, tenants, isProcessing, fileName, step,
@@ -453,7 +484,10 @@ export function useRentRollParser() {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
-    selectedRentRollType, tenancyScheduleTenants,
+    selectedRentRollType,
+    // Rich tenancy-schedule result (sub-sections, typed values) — use this
+    // anywhere TenantObject[] is not enough (e.g. a dedicated schedule view).
+    tenancyScheduleTenants,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,

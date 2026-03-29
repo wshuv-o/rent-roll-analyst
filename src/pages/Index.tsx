@@ -1,4 +1,4 @@
-//src/pages/Index.tsx
+// src/pages/Index.tsx
 import { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { SpreadsheetViewer } from '@/components/SpreadsheetViewer';
@@ -9,7 +9,8 @@ import { ActivityLog } from '@/components/ActivityLog';
 import { RentRollTypeConfirmStep } from '@/components/RentRollTypeConfirmStep';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-  
+import { TenancyScheduleTable } from '@/components/TenancySchedule';
+
 const Index = () => {
   const {
     logs, tenants, isProcessing, fileName, step,
@@ -17,6 +18,7 @@ const Index = () => {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
+    selectedRentRollType, tenancyScheduleTenants,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
@@ -25,6 +27,8 @@ const Index = () => {
   } = useRentRollParser();
 
   const [showSentData, setShowSentData] = useState(false);
+
+  const isTenancySchedule = selectedRentRollType === 'tenancy-schedule';
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -65,6 +69,7 @@ const Index = () => {
       <div className="flex-1 flex min-h-0">
         {/* Main panel */}
         <div className="flex-1 min-w-0 flex flex-col border-r border-panel-border">
+
           {step === 'upload' && (
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="w-full max-w-md">
@@ -80,7 +85,7 @@ const Index = () => {
             />
           )}
 
-          {/* Review sample step — spreadsheet with selection overlay + sliders */}
+          {/* Review sample — spreadsheet + sliders (regular rent roll only) */}
           {step === 'review-sample' && sheetData.length > 0 && (
             <>
               <div className="flex-1 min-h-0">
@@ -105,6 +110,7 @@ const Index = () => {
             </>
           )}
 
+          {/* AI analysis / manual confirm (regular rent roll only) */}
           {(step === 'analyzing' || step === 'confirm') && sheetData.length > 0 && (
             <>
               <div className="flex-1 min-h-0">
@@ -139,13 +145,33 @@ const Index = () => {
             </div>
           )}
 
-          {step === 'done' && tenants.length > 0 && (
-            <div className="flex-1 overflow-y-auto p-4">
-              <TenantTable tenants={tenants} fileName={fileName} instruction={instruction!} groupSpans={groupSpans} columnLabels={buildColumnLabels()} customGroups={customGroups} onBack={goBackToConfirm} />
+          {/* ── Done: tenancy schedule → rich flat table ── */}
+          {step === 'done' && isTenancySchedule && tenancyScheduleTenants.length > 0 && (
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              <TenancyScheduleTable
+                tenants={tenancyScheduleTenants}
+                fileName={fileName}
+                onBack={goBackToConfirm}
+              />
             </div>
           )}
 
-          {step === 'done' && tenants.length === 0 && (
+          {/* ── Done: regular rent roll → existing TenantTable ── */}
+          {step === 'done' && !isTenancySchedule && tenants.length > 0 && (
+            <div className="flex-1 overflow-y-auto p-4">
+              <TenantTable
+                tenants={tenants}
+                fileName={fileName}
+                instruction={instruction!}
+                groupSpans={groupSpans}
+                columnLabels={buildColumnLabels()}
+                customGroups={customGroups}
+                onBack={goBackToConfirm}
+              />
+            </div>
+          )}
+
+          {step === 'done' && tenants.length === 0 && tenancyScheduleTenants.length === 0 && (
             <div className="flex-1 flex items-center justify-center">
               <span className="text-sm font-mono text-log-flag">
                 0 tenants found. Try adjusting column assignments.
@@ -159,6 +185,7 @@ const Index = () => {
           <ActivityLog entries={logs} />
         </div>
       </div>
+
       <Dialog open={showSentData} onOpenChange={setShowSentData}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
           <DialogHeader>
