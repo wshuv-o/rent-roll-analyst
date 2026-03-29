@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(rm -f \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/features.ts\" \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/registry.ts\")",
+      "Bash(rm -rf \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/types\")",
+      "Bash(node test-tenancy.mjs)"
+    ]
+  }
+}

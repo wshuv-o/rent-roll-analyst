@@ -127,6 +127,7 @@ export const CUSTOM_GROUP_HUES = [320, 190, 60, 100, 350, 230] as const;
  * No string conversion — values are preserved as-is from the spreadsheet.
  * The column mapping (ParsingInstruction) tells consumers which column holds which field.
  */
+//src/lib/types.ts
 export interface TenantObject {
   suite_id: string;
   tenant_name: string;
@@ -136,4 +137,4 @@ export interface TenantObject {
 }
 
 // Workflow state
-export type WorkflowStep = 'upload' | 'review-sample' | 'analyzing' | 'confirm' | 'parsing' | 'done';
+export type WorkflowStep = 'upload' | 'type-confirm' | 'review-sample' | 'analyzing' | 'confirm' | 'parsing' | 'done';

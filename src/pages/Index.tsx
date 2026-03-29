@@ -1,3 +1,4 @@
+//src/pages/Index.tsx
 import { useState } from 'react';
 import { FileUpload } from '@/components/FileUpload';
 import { SpreadsheetViewer } from '@/components/SpreadsheetViewer';
@@ -5,6 +6,7 @@ import { ColumnMappingToolbar } from '@/components/ColumnMappingToolbar';
 import { SampleReviewBar } from '@/components/SampleReviewBar';
 import { TenantTable } from '@/components/TenantTable';
 import { ActivityLog } from '@/components/ActivityLog';
+import { RentRollTypeConfirmStep } from '@/components/RentRollTypeConfirmStep';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
   
@@ -15,7 +17,7 @@ const Index = () => {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
-    loadFile, sendSampleToAI,
+    loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     buildColumnLabels,
@@ -69,6 +71,13 @@ const Index = () => {
                 <FileUpload onFileSelect={loadFile} isProcessing={isProcessing} />
               </div>
             </div>
+          )}
+
+          {step === 'type-confirm' && (
+            <RentRollTypeConfirmStep
+              fileName={fileName}
+              onProceed={confirmRentRollType}
+            />
           )}
 
           {/* Review sample step — spreadsheet with selection overlay + sliders */}

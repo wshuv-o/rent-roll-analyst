@@ -1,3 +1,4 @@
+//src/hooks/useRentRollParser.ts
 import { useState, useCallback, useRef } from 'react';
 import type { LogEntry, LogType, TenantObject, ParsingInstruction, WorkflowStep, GroupSpan, ColumnGroupId, CustomGroup } from '@/lib/types';
 import { COLUMN_GROUPS } from '@/lib/types';
@@ -7,6 +8,8 @@ import { buildSample } from '@/lib/sample-builder';
 import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
 import { indexToColLetter, colLetterToIndex } from '@/lib/col-utils';
+import { parseTenancySchedule } from '@/lib/rent-roll-types/tenancy-schedule-parser';
+import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
 
 let logIdCounter = 0;
 
@@ -79,6 +82,7 @@ export function useRentRollParser() {
   const [customGroups, setCustomGroups] = useState<CustomGroup[]>([]);
 
   const [sentSampleHtml, setSentSampleHtml] = useState<string | null>(null);
+  const [selectedRentRollType, setSelectedRentRollType] = useState<string | null>(null);
 
   const sheetDataRef = useRef<(string | number | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
@@ -138,10 +142,50 @@ export function useRentRollParser() {
     setSampleRows(Math.min(15, rows));
     setSampleCols(Math.min(effCols, MAX_SAMPLE_COLS));
 
-    addLog('system', `Review the sample area below. Adjust rows/columns if needed, then click "Send to AI".`);
-
-    setStep('review-sample');
+    setStep('type-confirm');
     setIsProcessing(false);
+  }, [addLog]);
+
+  // Tenancy schedule result (separate from regular TenantObject[])
+  const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
+
+  // Step 1b: User selects rent roll type → branch by type
+  const confirmRentRollType = useCallback((typeId: string) => {
+    setSelectedRentRollType(typeId);
+
+    if (typeId === 'tenancy-schedule') {
+      // Tenancy schedule: skip AI, parse directly with hardcoded rules
+      addLog('system', `Rent roll type selected: Tenancy Schedule. Parsing with built-in rules...`);
+      setStep('parsing');
+      setIsProcessing(true);
+
+      const data = sheetDataRef.current;
+      const result = parseTenancySchedule(data, addLog);
+      setTenancyScheduleTenants(result);
+
+      // Convert to TenantObject[] for the existing TenantTable display.
+      // Main row keys are dynamic (from merged headers), so find the right ones.
+      const converted: TenantObject[] = result.map(t => {
+        const mr = t.mainRow;
+        // Find the unit and tenant name by looking for common header labels
+        const unitKey = Object.keys(mr).find(k => /unit/i.test(k)) || '';
+        const leaseKey = Object.keys(mr).find(k => /lease(?!.*type|.*from|.*to)/i.test(k)) || '';
+        return {
+          suite_id: String(mr[unitKey] ?? ''),
+          tenant_name: String(mr[leaseKey] ?? ''),
+          rawRows: t.rawRows,
+          notes: '',
+        };
+      });
+      setTenants(converted);
+
+      setStep('done');
+      setIsProcessing(false);
+    } else {
+      // Regular: go through AI flow
+      addLog('system', `Rent roll type selected: ${typeId}. Adjust sample area then click "Send to AI".`);
+      setStep('review-sample');
+    }
   }, [addLog]);
 
   // Step 2: User confirms sample bounds → send to AI
@@ -385,6 +429,8 @@ export function useRentRollParser() {
     setColumnAliases({});
     setCustomGroups([]);
     setSentSampleHtml(null);
+    setSelectedRentRollType(null);
+    setTenancyScheduleTenants([]);
   }, []);
 
   const reAnalyze = useCallback(() => {
@@ -407,7 +453,8 @@ export function useRentRollParser() {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
-    loadFile, sendSampleToAI,
+    selectedRentRollType, tenancyScheduleTenants,
+    loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
     confirmAndParse, resetToUpload, reAnalyze, goBackToConfirm,
