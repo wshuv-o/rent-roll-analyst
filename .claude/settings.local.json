@@ -12,7 +12,10 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(netstat -ano)",
       "Bash(taskkill //PID 36932 //F)",
-      "Bash(node --loader ts-node/esm -e \":*)"
+      "Bash(node --loader ts-node/esm -e \":*)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\(''exceljs''\\); console.log\\(''ok''\\)\")",
+      "Bash(ls node_modules/exceljs/dist/*.browser*)"
     ]
   }
 }

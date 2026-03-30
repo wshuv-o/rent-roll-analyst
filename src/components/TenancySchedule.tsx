@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react';
 import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { MappingDialog, pairKey } from './MappingDialog';
 import type { UniqueChargePair } from './MappingDialog';
 
@@ -393,7 +394,7 @@ const COLS: ColDef[] = [
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
 
-function downloadXLSX(
+async function downloadXLSX(
   rows: FlatRow[],
   fileName: string,
   mappings: Record<string, string> = {},
@@ -573,23 +574,126 @@ function downloadXLSX(
     return row;
   });
 
-  // ── Build worksheet ───────────────────────────────────────────────────────
-  const ws = XLSX.utils.aoa_to_sheet([h1, h2, h3, h4, ...dataRows], { cellDates: true });
+  // ── Build styled workbook with ExcelJS ───────────────────────────────────
+  const wb2 = new ExcelJS.Workbook();
+  wb2.creator = 'Rent Roll Analyst';
 
-  // Column widths
-  ws['!cols'] = Array.from({ length: TOTAL }, (_, i) => {
-    if (i === 0)              return { wch: 32 };
-    if (i === COL_BLANK && rsTotal > 0 && csTotal > 0) return { wch: 2 };
-    if (i < nM)               return { wch: 14 };
-    return { wch: 13 };
+  const ws2 = wb2.addWorksheet('Rent Roll', {
+    views: [{ state: 'frozen', xSplit: nM, ySplit: 4, showGridLines: false }],
   });
 
-  // Freeze: first nM columns + first 4 rows
-  ws['!freeze'] = { xSplit: nM, ySplit: 4 };
+  // Column widths
+  ws2.columns = Array.from({ length: TOTAL }, (_, i) => ({
+    width: i === 0 ? 34
+         : (i === COL_BLANK && rsTotal > 0 && csTotal > 0) ? 2
+         : i < nM ? 16
+         : 14,
+  }));
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Rent Roll');
-  XLSX.writeFile(wb, fileName.replace(/\.[^.]+$/, '') + '_extracted.xlsx');
+  // ── Color palette (ARGB) ─────────────────────────────────────────────────
+  // Tenant Info: blue family  |  Rent Steps: green family  |  CS: orange family
+  const PAL = {
+    ti1: 'FF1F3864', ti2: 'FF2E75B6', ti3: 'FF9DC3E6', ti4: 'FFDEEAF1',
+    rs1: 'FF1E4620', rs2: 'FF548235', rs3: 'FFA9D18E', rs4: 'FFE2EFDA',
+    cs1: 'FF833C00', cs2: 'FFC55A11', cs3: 'FFF4B183', cs4: 'FFFCE4D6',
+    blank: 'FF303030',
+    white: 'FFFFFFFF', dark: 'FF1A1A1A',
+    rowOdd: 'FFFFFFFF', rowEven: 'FFF5F7FA',
+    borderColor: 'FFB8C4CE',
+  };
+
+  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.rs1, PAL.rs2, PAL.cs1, PAL.cs2, PAL.blank]);
+
+  const mkFill = (argb: string): ExcelJS.Fill =>
+    ({ type: 'pattern', pattern: 'solid', fgColor: { argb } } as ExcelJS.Fill);
+
+  const mkBorder = (weight: 'hair' | 'thin' | 'medium' = 'thin'): Partial<ExcelJS.Borders> => {
+    const side = { style: weight as ExcelJS.BorderStyle, color: { argb: PAL.borderColor } };
+    return { top: side, left: side, bottom: side, right: side };
+  };
+
+  const colSection = (ci: number): 'tenant' | 'rs' | 'cs' | 'blank' => {
+    if (ci < nM) return 'tenant';
+    if (rsTotal > 0 && ci >= COL_RS && ci < COL_RS + rsTotal) return 'rs';
+    if (ci === COL_BLANK && rsTotal > 0 && csTotal > 0) return 'blank';
+    if (csTotal > 0 && ci >= COL_CS && ci < COL_CS + csTotal) return 'cs';
+    return 'blank';
+  };
+
+  const hdrFill = (ci: number, level: 1 | 2 | 3 | 4): string => {
+    const s = colSection(ci);
+    if (s === 'blank') return PAL.blank;
+    const map = {
+      tenant: [PAL.ti1, PAL.ti2, PAL.ti3, PAL.ti4],
+      rs:     [PAL.rs1, PAL.rs2, PAL.rs3, PAL.rs4],
+      cs:     [PAL.cs1, PAL.cs2, PAL.cs3, PAL.cs4],
+    } as const;
+    return map[s][level - 1];
+  };
+
+  // ── Add 4 header rows ─────────────────────────────────────────────────────
+  const HDR_HEIGHTS = [22, 18, 18, 16];
+  const hdrs = [h1, h2, h3, h4];
+
+  hdrs.forEach((hdr, hi) => {
+    const level = (hi + 1) as 1 | 2 | 3 | 4;
+    const exRow = ws2.addRow(hdr as (string | number | Date | null)[]);
+    exRow.height = HDR_HEIGHTS[hi];
+    exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+      const ci = colIdx - 1;
+      const bg = hdrFill(ci, level);
+      cell.fill = mkFill(bg);
+      cell.font = {
+        bold: true,
+        color: { argb: DARK_FILLS.has(bg) ? PAL.white : PAL.dark },
+        size: level === 1 ? 11 : 10,
+        name: 'Calibri',
+      };
+      cell.border = mkBorder(level === 4 ? 'medium' : 'thin');
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
+    });
+  });
+
+  // ── Add data rows ─────────────────────────────────────────────────────────
+  const DATE_FMT = 'dd-mmm-yyyy';
+  // leaseFrom / leaseTo column indices
+  const dateMainCols = new Set(
+    (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
+  );
+
+  dataRows.forEach((dataRow, ri) => {
+    const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
+    exRow.height = 15;
+    const rowBg = ri % 2 === 0 ? PAL.rowOdd : PAL.rowEven;
+    exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+      const ci = colIdx - 1;
+      cell.fill = mkFill(rowBg);
+      cell.font = { size: 10, name: 'Calibri', color: { argb: PAL.dark } };
+      cell.border = mkBorder('hair');
+
+      if (cell.value instanceof Date || dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'))) {
+        cell.numFmt = DATE_FMT;
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      } else if (typeof cell.value === 'number') {
+        cell.numFmt = '#,##0.00';
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else {
+        cell.alignment = { vertical: 'middle', horizontal: ci < nM ? 'left' : 'center' };
+      }
+    });
+  });
+
+  // ── Download ──────────────────────────────────────────────────────────────
+  const buf = await wb2.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName.replace(/\.[^.]+$/, '') + '_extracted.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ─── Flat (raw) export ────────────────────────────────────────────────────────
@@ -782,8 +886,7 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
           uniquePairs={uniquePairs}
           onClose={() => setShowMapping(false)}
           onExport={(mappings, _categories) => {
-            downloadXLSX(rows, fileName, mappings);
-            setShowMapping(false);
+            downloadXLSX(rows, fileName, mappings).then(() => setShowMapping(false));
           }}
         />
       )}
