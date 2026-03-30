@@ -428,6 +428,17 @@ export function parseMallRentRoll(data: Cell[][], addLog?: LogFn): MallRentRollT
     const catVal = str(cell(row, C.categoryLabel));
     if (catVal && catVal !== currentCategory) currentCategory = catVal;
 
+    // Space type row: only unit column has a value (e.g. "Anchor", "Inline", "Outparcel")
+    // These rows have no DBA, no bill code, no sqft — just a label in the unit column
+    if (unitVal && !dbaVal && !billCodeVal) {
+      const otherVals = row.filter((v, ci) => ci !== C.unit && v !== null && v !== undefined && String(v).trim() !== '');
+      if (otherVals.length === 0) {
+        currentCategory = unitVal;
+        log('system', `Space type detected: "${unitVal}"`);
+        continue;
+      }
+    }
+
     // Total row
     const expDescVal = str(cell(row, C.expenseDescription));
     if (expDescVal.toLowerCase().includes('total')) {
