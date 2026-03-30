@@ -178,7 +178,7 @@ const WEIGHTED_FIELDS = new Set([
 function applyWeight(v: Cell, weight: number): Cell {
   const n = toNumber(v);
   if (n === null) return v;
-  return Math.round(n * weight * 100) / 100;
+  return n * weight;  // full float precision — no rounding
 }
 
 /**
@@ -219,7 +219,7 @@ function buildTenantBase(
   const wNum = (v: Cell): Cell => {
     if (!isSplit) return v;
     const n = toNumber(v);
-    return n !== null ? Math.round(n * w * 100) / 100 : v;
+    return n !== null ? n * w : v;  // full float precision — no rounding
   };
 
   return {
@@ -407,8 +407,8 @@ function downloadXLSX(rows: FlatRow[], fileName: string) {
         if (v instanceof Date) return v;
         // Numbers: pass raw so Excel keeps them numeric (sortable, formattable)
         if (typeof v === 'number') return v;
-        // Everything else: formatted string
-        return fmt(v as Cell) || null;
+        // String or null — pass as-is (no fmt() so no precision loss)
+        return (v as string | null);
       })
     );
   }
