@@ -12,7 +12,13 @@
       "mcp__Claude_Preview__preview_start",
       "Bash(netstat -ano)",
       "Bash(taskkill //PID 36932 //F)",
-      "Bash(node --loader ts-node/esm -e \":*)"
+      "Bash(node --loader ts-node/esm -e \":*)",
+      "Bash(node:*)",
+      "Bash(ls -la /c/Users/UseR/Downloads/*.xlsx)",
+      "Bash(ls -la \"/c/Users/UseR/Downloads/Willowbrook\"*)",
+      "Bash(python3:*)",
+      "Bash(ls -lh \"/c/Users/UseR/Downloads/Willowbrook\"*.xlsx)",
+      "Bash(file \"/c/Users/UseR/Downloads/Willowbrook\"*.xlsx)"
     ]
   }
 }
