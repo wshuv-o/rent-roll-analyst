@@ -577,12 +577,20 @@ export function MallRentRollTable({ tenants, fileName, onBack }: Props) {
           <button onClick={onBack} className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors">&larr; Back</button>
           <span className="text-[11px] font-mono text-foreground">{tenants.length} tenant{tenants.length !== 1 ? 's' : ''}</span>
         </div>
-        <button
-          onClick={() => downloadFinalRR(tenants, fileName)}
-          className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors"
-        >
-          &darr; Download Final RR
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => downloadSemiFinalRR(tenants, fileName)}
+            className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors"
+          >
+            &darr; Semi Final Download
+          </button>
+          <button
+            onClick={() => downloadFinalRR(tenants, fileName)}
+            className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors"
+          >
+            &darr; Download Final RR
+          </button>
+        </div>
       </div>
 
       {/* Table */}
