@@ -1,7 +1,9 @@
 // src/components/TenancyScheduleTable.tsx
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
 import * as XLSX from 'xlsx';
+import { MappingDialog, pairKey } from './MappingDialog';
+import type { UniqueChargePair } from './MappingDialog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -391,37 +393,45 @@ const COLS: ColDef[] = [
 
 // ─── Excel export ─────────────────────────────────────────────────────────────
 
-function downloadXLSX(rows: FlatRow[], fileName: string) {
-  // Build worksheet data: header row first, then data rows.
-  // Raw numbers/dates are passed as native types so Excel formats them properly.
-  const header = COLS.map(c => c.label);
+function downloadXLSX(
+  rows: FlatRow[],
+  fileName: string,
+  mappings: Record<string, string> = {},
+) {
+  // Insert a "Category" column immediately after chargeType in the schedule group.
+  const catInsertAfter = COLS.findIndex(c => c.key === 'chargeType');
+
+  const header: string[] = COLS.map(c => c.label);
+  if (catInsertAfter >= 0) header.splice(catInsertAfter + 1, 0, 'Category');
 
   const wsData: (string | number | Date | null)[][] = [header];
 
   for (const row of rows) {
-    wsData.push(
-      COLS.map(col => {
-        const v = row[col.key];
-        if (col.key === '_isSplit') return null;
-        // Dates: pass as JS Date so SheetJS encodes as Excel serial date
-        if (v instanceof Date) return v;
-        // Numbers: pass raw so Excel keeps them numeric (sortable, formattable)
-        if (typeof v === 'number') return v;
-        // String or null — pass as-is (no fmt() so no precision loss)
-        return (v as string | null);
-      })
-    );
+    const dataRow: (string | number | Date | null)[] = COLS.map(col => {
+      if (col.key === '_isSplit') return null;
+      const v = row[col.key];
+      if (v instanceof Date) return v;
+      if (typeof v === 'number') return v;
+      return (v as string | null);
+    });
+
+    if (catInsertAfter >= 0) {
+      const k   = pairKey(String(row.charge ?? ''), String(row.chargeType ?? ''));
+      dataRow.splice(catInsertAfter + 1, 0, mappings[k] ?? null);
+    }
+
+    wsData.push(dataRow);
   }
 
   const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true });
 
-  // Column widths — generous defaults, narrower for numeric cols
+  // Column widths
   const colWidths = COLS.map(col =>
     col.right ? { wch: 14 } : col.key === 'property' ? { wch: 38 } : { wch: 18 }
   );
+  if (catInsertAfter >= 0) colWidths.splice(catInsertAfter + 1, 0, { wch: 14 });
   ws['!cols'] = colWidths;
 
-  // Freeze the two header rows
   ws['!freeze'] = { xSplit: 0, ySplit: 1 };
 
   const wb = XLSX.utils.book_new();
@@ -441,6 +451,25 @@ interface Props {
 
 export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
   const rows = useMemo(() => flatten(tenants), [tenants]);
+
+  // Unique (charge, chargeType) pairs for the mapping dialog, sorted by Lease Type then Code
+  const uniquePairs = useMemo<UniqueChargePair[]>(() => {
+    const seen = new Set<string>();
+    const pairs: UniqueChargePair[] = [];
+    for (const row of rows) {
+      const charge     = String(row.charge     ?? '').trim();
+      const chargeType = String(row.chargeType ?? '').trim();
+      if (!charge) continue;
+      const k = pairKey(charge, chargeType);
+      if (!seen.has(k)) { seen.add(k); pairs.push({ charge, chargeType }); }
+    }
+    return pairs.sort((a, b) => {
+      const ct = a.chargeType.localeCompare(b.chargeType);
+      return ct !== 0 ? ct : a.charge.localeCompare(b.charge);
+    });
+  }, [rows]);
+
+  const [showMapping, setShowMapping] = useState(false);
 
   const sectionColour = (s: string) => {
     if (/rent step/i.test(s)) return 'text-blue-400 bg-blue-400/10 border-blue-400/30';
@@ -466,7 +495,7 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
           </span>
         </div>
         <button
-          onClick={() => downloadXLSX(rows, fileName)}
+          onClick={() => setShowMapping(true)}
           className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
         >
           ↓ Download Excel
@@ -562,6 +591,17 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
           </tbody>
         </table>
       </div>
+
+      {showMapping && (
+        <MappingDialog
+          uniquePairs={uniquePairs}
+          onClose={() => setShowMapping(false)}
+          onExport={(mappings, _categories) => {
+            downloadXLSX(rows, fileName, mappings);
+            setShowMapping(false);
+          }}
+        />
+      )}
     </div>
   );
 }
