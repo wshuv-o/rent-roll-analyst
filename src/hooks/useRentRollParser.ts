@@ -10,6 +10,8 @@ import { streamAnalysis } from '@/lib/ai-stream';
 import { indexToColLetter, colLetterToIndex } from '@/lib/col-utils';
 import { parseTenancySchedule } from '@/lib/rent-roll-types/tenancy-schedule-parser';
 import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
+import { parseMallRentRoll } from '@/lib/rent-roll-types/mall-rent-roll-parser';
+import type { MallRentRollTenant } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 
 let logIdCounter = 0;
 
@@ -86,6 +88,8 @@ export function useRentRollParser() {
 
   // Rich tenancy-schedule result (kept separate from the downcast TenantObject[])
   const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
+  // Rich mall-rent-roll result
+  const [mallRentRollTenants, setMallRentRollTenants] = useState<MallRentRollTenant[]>([]);
 
   const sheetDataRef = useRef<(string | number | Date | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
@@ -196,6 +200,26 @@ export function useRentRollParser() {
           notes: '',
         };
       });
+
+      setTenants(converted);
+      setStep('done');
+      setIsProcessing(false);
+
+    } else if (typeId === 'mall-rent-roll') {
+      addLog('system', 'Rent roll type selected: Mall Rent Roll. Parsing with built-in rules...');
+      setStep('parsing');
+      setIsProcessing(true);
+
+      const data = sheetDataRef.current;
+      const result = parseMallRentRoll(data, addLog);
+      setMallRentRollTenants(result);
+
+      const converted: TenantObject[] = result.map(t => ({
+        suite_id: t.unit,
+        tenant_name: t.dba,
+        rawRows: t.rawRows,
+        notes: '',
+      }));
 
       setTenants(converted);
       setStep('done');
@@ -451,6 +475,7 @@ export function useRentRollParser() {
     setSentSampleHtml(null);
     setSelectedRentRollType(null);
     setTenancyScheduleTenants([]);
+    setMallRentRollTenants([]);
   }, []);
 
   const reAnalyze = useCallback(() => {
@@ -461,7 +486,7 @@ export function useRentRollParser() {
     setCustomGroups([]);
     // For tenancy-schedule, go back to type-confirm (no AI sample review needed).
     // For regular rent rolls, go back to review-sample to adjust bounds.
-    if (selectedRentRollType === 'tenancy-schedule') {
+    if (selectedRentRollType === 'tenancy-schedule' || selectedRentRollType === 'mall-rent-roll') {
       setStep('type-confirm');
     } else {
       setStep('review-sample');
@@ -469,9 +494,9 @@ export function useRentRollParser() {
   }, [selectedRentRollType]);
 
   const goBackToConfirm = useCallback(() => {
-    // For tenancy-schedule there is no 'confirm' (AI column mapping) step.
+    // For tenancy-schedule / mall-rent-roll there is no 'confirm' (AI column mapping) step.
     // Send the user back to type selection so they can re-parse or switch type.
-    if (selectedRentRollType === 'tenancy-schedule') {
+    if (selectedRentRollType === 'tenancy-schedule' || selectedRentRollType === 'mall-rent-roll') {
       setStep('type-confirm');
     } else {
       setStep('confirm');
@@ -488,6 +513,7 @@ export function useRentRollParser() {
     // Rich tenancy-schedule result (sub-sections, typed values) — use this
     // anywhere TenantObject[] is not enough (e.g. a dedicated schedule view).
     tenancyScheduleTenants,
+    mallRentRollTenants,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,

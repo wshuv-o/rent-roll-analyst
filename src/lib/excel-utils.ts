@@ -3,6 +3,48 @@ import type { TenantObject, ParsingInstruction, GroupSpan } from './types';
 import { COLUMN_GROUPS } from './types';
 import { colLetterToIndex, getCellValue, indexToColLetter } from './col-utils';
 
+/**
+ * Pick the best sheet from a workbook.
+ * Prefers sheets whose first 15 rows contain rent-roll header keywords.
+ * Falls back to the sheet with the most rows.
+ */
+function pickBestSheet(workbook: XLSX.WorkBook): string {
+  const KEYWORDS = ['unit', 'dba', 'lease', 'tenant', 'suite', 'rent', 'sqft', 'square footage'];
+
+  let bestName = workbook.SheetNames[0];
+  let bestScore = -1;
+
+  for (const name of workbook.SheetNames) {
+    const sheet = workbook.Sheets[name];
+    const sample = XLSX.utils.sheet_to_json<(string | number | Date | null)[]>(sheet, {
+      header: 1, defval: null, raw: true, range: 0,
+    });
+
+    // Score by keyword matches in the first 15 rows
+    let score = 0;
+    const limit = Math.min(15, sample.length);
+    for (let r = 0; r < limit; r++) {
+      const row = sample[r];
+      if (!row) continue;
+      for (const cell of row) {
+        if (typeof cell === 'string') {
+          const lower = cell.toLowerCase();
+          for (const kw of KEYWORDS) {
+            if (lower.includes(kw)) score++;
+          }
+        }
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestName = name;
+    }
+  }
+
+  return bestName;
+}
+
 export function readExcelFile(file: File): Promise<{
   data: (string | number | Date | null)[][];
   totalRows: number;
@@ -17,7 +59,7 @@ export function readExcelFile(file: File): Promise<{
         if (!arrayBuffer) throw new Error('Failed to read file');
 
         const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
-        const sheetName = workbook.SheetNames[0];
+        const sheetName = pickBestSheet(workbook);
         const sheet = workbook.Sheets[sheetName];
 
         const jsonData = XLSX.utils.sheet_to_json<(string | number | Date | null)[]>(sheet, {
