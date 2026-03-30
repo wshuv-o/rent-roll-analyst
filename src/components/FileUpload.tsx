@@ -36,11 +36,11 @@ export function FileUpload({ onFileSelect, isProcessing }: FileUploadProps) {
           Drop Excel file here
         </div>
         <div className="font-mono text-xs text-muted-foreground">
-          .xlsx or .xls only
+          .xlsx, .xls, or .csv
         </div>
         <input
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.xls,.csv"
           onChange={handleChange}
           className="hidden"
           disabled={isProcessing}
