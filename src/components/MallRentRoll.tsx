@@ -1,7 +1,7 @@
-// src/components/MallRentRoll.tsx — Final RR display + 2-sheet Excel export
+// src/components/MallRentRoll.tsx — Mall Rent Roll display + 2-sheet Excel export
 import { useMemo } from 'react';
 import type { MallRentRollTenant } from '@/lib/rent-roll-types/mall-rent-roll-parser';
-import { DEFAULT_CHARGE_CODE_MAPPING, CHARGE_CODES } from '@/lib/rent-roll-types/mall-rent-roll-parser';
+import { DEFAULT_CHARGE_CODE_MAPPING } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 import * as XLSX from 'xlsx';
 
 type Cell = string | number | Date | null;
@@ -47,14 +47,56 @@ function isEmpty(v: Cell): boolean {
   return false;
 }
 
-// ─── Build flat row data ─────────────────────────────────────────────────────
+// ─── Build annual charges from tenant.charges[] ─────────────────────────────
 
-// Compute category totals from charge-by-code using the mapping
+function buildAnnualByCode(t: MallRentRollTenant): Record<string, number> {
+  const byCode: Record<string, number> = {};
+  for (const ch of t.charges) {
+    if (!ch.billCode) continue;
+    const monthly = ch.monthlyAmount ?? 0;
+    byCode[ch.billCode] = (byCode[ch.billCode] || 0) + monthly * 12;
+  }
+  return byCode;
+}
+
+// ─── Gather all unique charge codes from all tenants ────────────────────────
+
+function gatherAllChargeCodes(tenants: MallRentRollTenant[]): string[] {
+  const codeSet = new Set<string>();
+  for (const t of tenants) {
+    for (const ch of t.charges) {
+      if (ch.billCode) codeSet.add(ch.billCode);
+    }
+  }
+  // Sort: known codes first (in default order), then unknown codes alphabetically
+  const knownOrder = DEFAULT_CHARGE_CODE_MAPPING.map(m => m.code);
+  const known = knownOrder.filter(c => codeSet.has(c));
+  const unknown = Array.from(codeSet).filter(c => !knownOrder.includes(c)).sort();
+  return [...known, ...unknown];
+}
+
+// ─── Build mapping data (code → description → category) ────────────────────
+
+function buildMappingData(codes: string[]): { code: string; description: string; category: string; reliefSubType: string }[] {
+  const knownMap = new Map(DEFAULT_CHARGE_CODE_MAPPING.map(m => [m.code, m]));
+  return codes.map(code => {
+    const known = knownMap.get(code);
+    return {
+      code,
+      description: known?.description ?? code,
+      category: known?.category ?? '',
+      reliefSubType: known?.reliefSubType ?? '',
+    };
+  });
+}
+
+// ─── Compute category totals from charges ───────────────────────────────────
+
 const MAPPING_BY_CODE = new Map(DEFAULT_CHARGE_CODE_MAPPING.map(m => [m.code, m]));
 
-function computeCategoryTotal(byCode: Record<string, number>, category: string): number {
+function computeCategoryTotal(annualByCode: Record<string, number>, category: string): number {
   let total = 0;
-  for (const [code, amt] of Object.entries(byCode)) {
+  for (const [code, amt] of Object.entries(annualByCode)) {
     const m = MAPPING_BY_CODE.get(code);
     if (m && m.category === category) total += amt;
   }
@@ -68,10 +110,10 @@ interface ColDef {
   label: string;
   group: string;
   right?: boolean;
-  getter: (t: MallRentRollTenant) => Cell;
+  getter: (t: MallRentRollTenant, annualByCode: Record<string, number>) => Cell;
 }
 
-function buildColumns(): { cols: ColDef[]; groups: { name: string; count: number; color: string }[] } {
+function buildColumns(allCodes: string[]): { cols: ColDef[]; groups: { name: string; count: number; color: string }[] } {
   const cols: ColDef[] = [];
   const groups: { name: string; count: number; color: string }[] = [];
 
@@ -103,28 +145,28 @@ function buildColumns(): { cols: ColDef[]; groups: { name: string; count: number
 
   // 3. Annual category totals
   const catCols: ColDef[] = [
-    { key: 'annRent', label: 'Rent', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'Rent') },
-    { key: 'rentPSF', label: 'Rent PSF', group: 'Annual', right: true, getter: t => { const r = computeCategoryTotal(t.annualChargesByCode, 'Rent'); const s = t.squareFootage; return s ? r / s : null; } },
-    { key: 'annCAM', label: 'CAM', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'CAM') },
-    { key: 'annRET', label: 'RET', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'RET') },
-    { key: 'annUTL', label: 'UTL', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'UTL') },
-    { key: 'annRelief', label: 'Relief', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'Relief') },
-    { key: 'annExcluded', label: 'Excluded', group: 'Annual', right: true, getter: t => computeCategoryTotal(t.annualChargesByCode, 'Excluded') },
+    { key: 'annRent', label: 'Rent', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'Rent') },
+    { key: 'rentPSF', label: 'Rent PSF', group: 'Annual', right: true, getter: (t, abc) => { const r = computeCategoryTotal(abc, 'Rent'); const s = t.squareFootage; return s ? r / s : null; } },
+    { key: 'annCAM', label: 'CAM', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'CAM') },
+    { key: 'annRET', label: 'RET', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'RET') },
+    { key: 'annUTL', label: 'UTL', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'UTL') },
+    { key: 'annRelief', label: 'Relief', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'Relief') },
+    { key: 'annExcluded', label: 'Excluded', group: 'Annual', right: true, getter: (t, abc) => computeCategoryTotal(abc, 'Excluded') },
   ];
   cols.push(...catCols);
   groups.push({ name: 'Annual Totals', count: catCols.length, color: 'bg-violet-500/10 text-violet-400' });
 
-  // 4. Individual charge codes
-  const codeCols: ColDef[] = CHARGE_CODES.map(code => ({
+  // 4. Individual charge codes (dynamic)
+  const codeCols: ColDef[] = allCodes.map(code => ({
     key: `code_${code}`, label: code, group: 'Codes', right: true,
-    getter: (t: MallRentRollTenant) => t.annualChargesByCode[code] ?? 0,
+    getter: (_t: MallRentRollTenant, abc: Record<string, number>) => abc[code] ?? 0,
   }));
   cols.push(...codeCols);
   groups.push({ name: 'Charge Codes', count: codeCols.length, color: 'bg-slate-500/10 text-slate-400' });
 
   // 5. Total & Variance
   const tvCols: ColDef[] = [
-    { key: 'total', label: 'Total', group: 'Totals', right: true, getter: t => t.annualTotal },
+    { key: 'total', label: 'Total', group: 'Totals', right: true, getter: (t, abc) => Object.values(abc).reduce((s, v) => s + v, 0) },
     { key: 'variance', label: 'Variance', group: 'Totals', right: true, getter: t => t.variance },
   ];
   cols.push(...tvCols);
@@ -182,60 +224,77 @@ function buildColumns(): { cols: ColDef[]; groups: { name: string; count: number
 
 function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
   const wb = XLSX.utils.book_new();
+  const allCodes = gatherAllChargeCodes(tenants);
+  const codeCount = allCodes.length;
+  const mappingRows = buildMappingData(allCodes);
 
-  // ── Sheet 1: Mapping ──
+  // ── Sheet 1: DRAFT (Mapping) ──
   const mappingData: (string | null)[][] = [
-    ['Code', 'Description', 'Category', 'Relief Sub-Type'],
-    ...DEFAULT_CHARGE_CODE_MAPPING.map(m => [m.code, m.description, m.category, m.reliefSubType]),
+    ['Code', 'Description', 'Mapping', 'Relief'],
+    ...mappingRows.map(m => [m.code, m.description, m.category || null, m.reliefSubType || null]),
   ];
   const wsMapping = XLSX.utils.aoa_to_sheet(mappingData);
-  wsMapping['!cols'] = [{ wch: 8 }, { wch: 25 }, { wch: 12 }, { wch: 15 }];
-  XLSX.utils.book_append_sheet(wb, wsMapping, 'Mapping');
+  wsMapping['!cols'] = [{ wch: 10 }, { wch: 28 }, { wch: 14 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, wsMapping, 'DRAFT');
 
   // ── Sheet 2: Final RR ──
   const ws: XLSX.WorkSheet = {};
-  const codeCount = CHARGE_CODES.length; // 28
 
-  // Column layout indices for Final RR
+  // Column layout
   let c = 0;
   const COL = {
-    unit: c++, dba: c++, leaseId: c++, sf: c++, leaseType: c++,
-    spaceType: c++, unitType: c++, leaseStatus: c++, pil: c++,
+    unit: c++, dba: c++, leaseId: c++, sf: c++, modifiedSf: c++,
+    leaseType: c++, spaceType: c++, spaceTypeInput: c++, unitType: c++,
+    leaseStatus: c++, pil: c++,
+    _sep1: c++,
     chargeCode: c++, chargeDesc: c++,
     commence: c++, origEnd: c++, expire: c++,
-    // Category totals (formulas)
-    annRent: c++, rentPSF: c++, annCAM: c++, annRET: c++, annUTL: c++, annRelief: c++, annExcluded: c++,
+    annRent: c++, rentPSF: c++,
+    annCAM: c++, annRET: c++, annUTL: c++, annRelief: c++, annExcluded: c++,
+    _sep2: c++,
   };
-  // Individual charge codes start here
+
+  // Individual charge codes
   const codeStart = c;
-  c += codeCount; // 28 columns for individual codes
+  c += codeCount;
+
   const COL2 = {
     total: c++, variance: c++,
+    _sep3: c++,
   };
+
   // Rent bumps (18 pairs)
   const rentBumpStart = c;
   c += 36;
+  const _sepRB = c++;
+
   // Breakpoints (current + 5 future, each date/amount/%)
   const bpStart = c;
   c += 18;
+  const _sepBP = c++;
+
   // CAM bumps (12 pairs)
   const camBumpStart = c;
   c += 24;
+  const _sepCAM = c++;
+
   // UTL bumps (12 pairs)
   const utlBumpStart = c;
   c += 24;
+  const _sepUTL = c++;
+
   // RET bumps (12 pairs)
   const retBumpStart = c;
   c += 24;
-  // Category label
-  const catLabelCol = c++;
+
   const totalCols = c;
 
-  // Row 1: Headers
+  // Row 0: Headers
   const headers: string[] = new Array(totalCols).fill('');
   headers[COL.unit] = 'Units'; headers[COL.dba] = 'Tenant Name'; headers[COL.leaseId] = 'Lease ID';
-  headers[COL.sf] = 'SF'; headers[COL.leaseType] = 'Lease Type';
-  headers[COL.spaceType] = 'Space Type'; headers[COL.unitType] = 'Unit Type';
+  headers[COL.sf] = 'SF'; headers[COL.modifiedSf] = 'Modified SF';
+  headers[COL.leaseType] = 'Lease Type'; headers[COL.spaceType] = 'Space Type';
+  headers[COL.spaceTypeInput] = 'Space Type - Input'; headers[COL.unitType] = 'Unit Type';
   headers[COL.leaseStatus] = 'Lease Status'; headers[COL.pil] = 'PIL';
   headers[COL.chargeCode] = 'Code'; headers[COL.chargeDesc] = 'Expense Description';
   headers[COL.commence] = 'Commencement Date'; headers[COL.origEnd] = 'Original End Date';
@@ -243,50 +302,69 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
   headers[COL.annRent] = 'Rent'; headers[COL.rentPSF] = 'Rent PSF';
   headers[COL.annCAM] = 'CAM'; headers[COL.annRET] = 'RET'; headers[COL.annUTL] = 'UTL';
   headers[COL.annRelief] = 'Relief'; headers[COL.annExcluded] = 'Excluded';
-  for (let i = 0; i < codeCount; i++) headers[codeStart + i] = CHARGE_CODES[i];
-  headers[COL2.total] = 'Total'; headers[COL2.variance] = 'Variance';
-  for (let i = 0; i < 18; i++) { headers[rentBumpStart + i * 2] = `Bump Date ${i + 1}`; headers[rentBumpStart + i * 2 + 1] = `Bump Rent ${i + 1}`; }
-  const bpLabels = ['Current', 'BP 1', 'BP 2', 'BP 3', 'BP 4', 'BP 5'];
-  for (let i = 0; i < 6; i++) { headers[bpStart + i * 3] = `${bpLabels[i]} BP Date`; headers[bpStart + i * 3 + 1] = `${bpLabels[i]} Breakpoint`; headers[bpStart + i * 3 + 2] = `${bpLabels[i]} %`; }
-  for (let i = 0; i < 12; i++) { headers[camBumpStart + i * 2] = `CAM Bump Date ${i + 1}`; headers[camBumpStart + i * 2 + 1] = `CAM Bump Amount ${i + 1}`; }
-  for (let i = 0; i < 12; i++) { headers[utlBumpStart + i * 2] = `UTL Bump Date ${i + 1}`; headers[utlBumpStart + i * 2 + 1] = `UTL Bump Amount ${i + 1}`; }
-  for (let i = 0; i < 12; i++) { headers[retBumpStart + i * 2] = `RET Bump Date ${i + 1}`; headers[retBumpStart + i * 2 + 1] = `RET Bump Amount ${i + 1}`; }
-  headers[catLabelCol] = 'Category';
 
-  // Write header row (row 1, 0-indexed r=0)
+  for (let i = 0; i < codeCount; i++) headers[codeStart + i] = allCodes[i];
+  headers[COL2.total] = 'Total'; headers[COL2.variance] = 'Variance';
+
+  for (let i = 0; i < 18; i++) {
+    headers[rentBumpStart + i * 2] = `Bump Date ${i + 1}`;
+    headers[rentBumpStart + i * 2 + 1] = `Bump Rent ${i + 1}`;
+  }
+  const bpLabels = ['Current', 'BP 1', 'BP 2', 'BP 3', 'BP 4', 'BP 5'];
+  for (let i = 0; i < 6; i++) {
+    headers[bpStart + i * 3] = `${bpLabels[i]} BP Date`;
+    headers[bpStart + i * 3 + 1] = `${bpLabels[i]} Breakpoint`;
+    headers[bpStart + i * 3 + 2] = `${bpLabels[i]} %`;
+  }
+  for (let i = 0; i < 12; i++) {
+    headers[camBumpStart + i * 2] = `CAM Bump Date ${i + 1}`;
+    headers[camBumpStart + i * 2 + 1] = `CAM Bump Amount ${i + 1}`;
+  }
+  for (let i = 0; i < 12; i++) {
+    headers[utlBumpStart + i * 2] = `UTL Bump Date ${i + 1}`;
+    headers[utlBumpStart + i * 2 + 1] = `UTL Bump Amount ${i + 1}`;
+  }
+  for (let i = 0; i < 12; i++) {
+    headers[retBumpStart + i * 2] = `RET Bump Date ${i + 1}`;
+    headers[retBumpStart + i * 2 + 1] = `RET Bump Amount ${i + 1}`;
+  }
+
+  // Write header row
   for (let ci = 0; ci < headers.length; ci++) {
     if (headers[ci]) ws[XLSX.utils.encode_cell({ r: 0, c: ci })] = { v: headers[ci], t: 's' };
   }
 
-  // Write data rows (starting at r=1)
-  // Mapping range for SUMPRODUCT: Mapping!$C$2:$C$29
-  const mappingCatRange = `Mapping!$C$2:$C$${1 + codeCount}`;
-  const codeStartRef = (row: number) => colToRef(codeStart, row);
-  const codeEndRef = (row: number) => colToRef(codeStart + codeCount - 1, row);
+  // Mapping range for SUMPRODUCT: DRAFT!$C$2:$C${1+codeCount}
+  const mappingCatRange = `DRAFT!$C$2:$C$${1 + codeCount}`;
+  const codeStartRefFn = (row: number) => colToRef(codeStart, row);
+  const codeEndRefFn = (row: number) => colToRef(codeStart + codeCount - 1, row);
 
+  // Write data rows
   for (let ti = 0; ti < tenants.length; ti++) {
     const t = tenants[ti];
-    const r = ti + 1; // 0-indexed row (row 0 = header)
-    const excelRow = r + 1; // 1-indexed for formulas
+    const r = ti + 1;
+    const excelRow = r + 1;
 
-    const writeCell = (col: number, v: Cell, type?: string) => {
+    const writeCell = (col: number, v: Cell) => {
       if (v === null || v === undefined) return;
       if (v instanceof Date) { ws[XLSX.utils.encode_cell({ r, c: col })] = { v, t: 'd' }; return; }
-      if (typeof v === 'number') {
-        // Convert Excel serial dates for date columns
-        ws[XLSX.utils.encode_cell({ r, c: col })] = { v, t: type || 'n' };
-        return;
-      }
+      if (typeof v === 'number') { ws[XLSX.utils.encode_cell({ r, c: col })] = { v, t: 'n' }; return; }
       ws[XLSX.utils.encode_cell({ r, c: col })] = { v: String(v), t: 's' };
     };
 
     // Identity
-    writeCell(COL.unit, t.unit); writeCell(COL.dba, t.dba); writeCell(COL.leaseId, t.leaseId);
-    writeCell(COL.sf, t.squareFootage); writeCell(COL.leaseType, t.leaseType);
-    writeCell(COL.spaceType, t.category); writeCell(COL.unitType, t.unitType);
-    writeCell(COL.leaseStatus, t.leaseStatus); writeCell(COL.pil, t.percentInLieu);
+    writeCell(COL.unit, t.unit);
+    writeCell(COL.dba, t.dba);
+    writeCell(COL.leaseId, t.leaseId);
+    writeCell(COL.sf, t.squareFootage);
+    writeCell(COL.leaseType, t.leaseType);
+    writeCell(COL.spaceType, t.category);
+    writeCell(COL.spaceTypeInput, t.category);
+    writeCell(COL.unitType, t.unitType);
+    writeCell(COL.leaseStatus, t.leaseStatus);
+    writeCell(COL.pil, t.percentInLieu);
 
-    // Current charge
+    // First charge info
     if (t.charges.length > 0) {
       writeCell(COL.chargeCode, t.charges[0].billCode);
       writeCell(COL.chargeDesc, t.charges[0].expenseDescription);
@@ -295,24 +373,33 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     writeCell(COL.origEnd, t.originalEndDate);
     writeCell(COL.expire, t.expireCloseDate);
 
-    // Category totals — SUMPRODUCT formulas referencing Mapping sheet
-    const cRange = `${codeStartRef(excelRow)}:${codeEndRef(excelRow)}`;
-    ws[XLSX.utils.encode_cell({ r, c: COL.annRent })] =     { f: `SUMPRODUCT((${mappingCatRange}="Rent")*(${cRange}))`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.rentPSF })] =     { f: `IF(${colToRef(COL.sf, excelRow)}=0,"",${colToRef(COL.annRent, excelRow)}/${colToRef(COL.sf, excelRow)})`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.annCAM })] =      { f: `SUMPRODUCT((${mappingCatRange}="CAM")*(${cRange}))`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.annRET })] =      { f: `SUMPRODUCT((${mappingCatRange}="RET")*(${cRange}))`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.annUTL })] =      { f: `SUMPRODUCT((${mappingCatRange}="UTL")*(${cRange}))`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.annRelief })] =   { f: `SUMPRODUCT((${mappingCatRange}="Relief")*(${cRange}))`, t: 'n' };
-    ws[XLSX.utils.encode_cell({ r, c: COL.annExcluded })] = { f: `SUMPRODUCT((${mappingCatRange}="Excluded")*(${cRange}))`, t: 'n' };
-
-    // Individual charge codes
-    for (let i = 0; i < CHARGE_CODES.length; i++) {
-      writeCell(codeStart + i, t.annualChargesByCode[CHARGE_CODES[i]] ?? 0);
+    // Individual charge codes — annual amounts computed from charges
+    const annualByCode = buildAnnualByCode(t);
+    for (let i = 0; i < allCodes.length; i++) {
+      writeCell(codeStart + i, annualByCode[allCodes[i]] ?? 0);
     }
 
-    // Total & Variance
-    writeCell(COL2.total, t.annualTotal);
-    writeCell(COL2.variance, t.variance);
+    // Category totals — SUMPRODUCT formulas referencing DRAFT mapping sheet
+    if (codeCount > 0) {
+      const cRange = `${codeStartRefFn(excelRow)}:${codeEndRefFn(excelRow)}`;
+      ws[XLSX.utils.encode_cell({ r, c: COL.annRent })] = { f: `SUMPRODUCT((${mappingCatRange}="Rent")*(${cRange}))`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.rentPSF })] = { f: `IF(${colToRef(COL.sf, excelRow)}=0,"",${colToRef(COL.annRent, excelRow)}/${colToRef(COL.sf, excelRow)})`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.annCAM })] = { f: `SUMPRODUCT((${mappingCatRange}="CAM")*(${cRange}))`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.annRET })] = { f: `SUMPRODUCT((${mappingCatRange}="RET")*(${cRange}))`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.annUTL })] = { f: `SUMPRODUCT((${mappingCatRange}="UTL")*(${cRange}))`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.annRelief })] = { f: `SUMPRODUCT((${mappingCatRange}="Relief")*(${cRange}))`, t: 'n' };
+      ws[XLSX.utils.encode_cell({ r, c: COL.annExcluded })] = { f: `SUMPRODUCT((${mappingCatRange}="Excluded")*(${cRange}))`, t: 'n' };
+    }
+
+    // Total = SUM of all charge code columns
+    if (codeCount > 0) {
+      ws[XLSX.utils.encode_cell({ r, c: COL2.total })] = { f: `SUM(${codeStartRefFn(excelRow)}:${codeEndRefFn(excelRow)})`, t: 'n' };
+    }
+    // Variance = Total - (Rent + CAM + RET + UTL + Relief + Excluded) — should be 0
+    ws[XLSX.utils.encode_cell({ r, c: COL2.variance })] = {
+      f: `${colToRef(COL2.total, excelRow)}-${colToRef(COL.annRent, excelRow)}-${colToRef(COL.annCAM, excelRow)}-${colToRef(COL.annRET, excelRow)}-${colToRef(COL.annUTL, excelRow)}-${colToRef(COL.annRelief, excelRow)}-${colToRef(COL.annExcluded, excelRow)}`,
+      t: 'n'
+    };
 
     // Rent bumps (18 pairs)
     for (let i = 0; i < 18; i++) {
@@ -322,7 +409,7 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
       }
     }
 
-    // Breakpoints (6 entries: current + 5 future)
+    // Breakpoints (6 entries)
     for (let i = 0; i < 6 && i < t.breakpoints.length; i++) {
       writeCell(bpStart + i * 3, t.breakpoints[i].date);
       writeCell(bpStart + i * 3 + 1, t.breakpoints[i].amount);
@@ -335,9 +422,6 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
       if (t.utlBumps[i]) { writeCell(utlBumpStart + i * 2, t.utlBumps[i].date); writeCell(utlBumpStart + i * 2 + 1, t.utlBumps[i].amount); }
       if (t.retBumps[i]) { writeCell(retBumpStart + i * 2, t.retBumps[i].date); writeCell(retBumpStart + i * 2 + 1, t.retBumps[i].amount); }
     }
-
-    // Category label
-    writeCell(catLabelCol, t.category);
   }
 
   // Set range
@@ -367,7 +451,13 @@ interface Props {
 }
 
 export function MallRentRollTable({ tenants, fileName, onBack }: Props) {
-  const { cols, groups } = useMemo(() => buildColumns(), []);
+  const allCodes = useMemo(() => gatherAllChargeCodes(tenants), [tenants]);
+  const { cols, groups } = useMemo(() => buildColumns(allCodes), [allCodes]);
+  const annualByCodeMap = useMemo(() => {
+    const map = new Map<MallRentRollTenant, Record<string, number>>();
+    for (const t of tenants) map.set(t, buildAnnualByCode(t));
+    return map;
+  }, [tenants]);
 
   return (
     <div className="flex flex-col h-full">
@@ -407,26 +497,29 @@ export function MallRentRollTable({ tenants, fileName, onBack }: Props) {
             </tr>
           </thead>
           <tbody>
-            {tenants.map((t, ri) => (
-              <tr key={ri} className={[
-                'hover:bg-muted/30 transition-colors',
-                ri > 0 && t.category !== tenants[ri - 1]?.category ? 'border-t-2 border-t-primary/20' : '',
-              ].join(' ')}>
-                {cols.map(col => {
-                  const raw = col.getter(t);
-                  const display = col.right && typeof raw === 'number' ? fmt(raw) : (isEmpty(raw) ? '' : fmt(raw));
-                  return (
-                    <td key={col.key} className={[
-                      'px-2 py-1 border border-panel-border whitespace-nowrap',
-                      col.right ? 'text-right tabular-nums' : '',
-                      !display ? 'text-muted-foreground/30' : 'text-foreground',
-                    ].join(' ')}>
-                      {display || '\u2014'}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+            {tenants.map((t, ri) => {
+              const abc = annualByCodeMap.get(t) || {};
+              return (
+                <tr key={ri} className={[
+                  'hover:bg-muted/30 transition-colors',
+                  ri > 0 && t.category !== tenants[ri - 1]?.category ? 'border-t-2 border-t-primary/20' : '',
+                ].join(' ')}>
+                  {cols.map(col => {
+                    const raw = col.getter(t, abc);
+                    const display = col.right && typeof raw === 'number' ? fmt(raw) : (isEmpty(raw) ? '' : fmt(raw));
+                    return (
+                      <td key={col.key} className={[
+                        'px-2 py-1 border border-panel-border whitespace-nowrap',
+                        col.right ? 'text-right tabular-nums' : '',
+                        !display ? 'text-muted-foreground/30' : 'text-foreground',
+                      ].join(' ')}>
+                        {display || '\u2014'}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
