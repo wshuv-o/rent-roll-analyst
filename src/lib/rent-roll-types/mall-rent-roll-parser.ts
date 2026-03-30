@@ -362,7 +362,7 @@ function extractMetadata(row: Cell[], tenant: MallRentRollTenant, labelCol: numb
   const label = rawLabel.replace(':', '').trim().toLowerCase();
   const field = METADATA_LABELS[label];
   if (!field) return false;
-  (tenant as Record<string, Cell>)[field] = cell(row, valueCol);
+  (tenant as unknown as Record<string, Cell>)[field] = cell(row, valueCol);
   return true;
 }
 

@@ -72,8 +72,9 @@ function toNumber(val: string | number | Date | null): number {
 }
 
 /** Get string from raw cell */
-function toStr(val: string | number | null): string {
+function toStr(val: string | number | Date | null): string {
   if (val === null || val === undefined) return '';
+  if (val instanceof Date) return val.toLocaleDateString('en-US');
   return String(val).trim();
 }
 
