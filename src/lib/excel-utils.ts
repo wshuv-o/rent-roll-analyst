@@ -144,7 +144,7 @@ export function exportToExcel(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Parsed Rent Roll');
 
-  const outputName = fileName.replace(/\.(xlsx|xls)$/i, '') + '_parsed.xlsx';
+  const outputName = fileName.replace(/\.(xlsx|xls|csv)$/i, '') + '_parsed.xlsx';
   XLSX.writeFile(wb, outputName);
 }
 
