@@ -2,6 +2,7 @@
 import { useMemo } from 'react';
 import type { MallRentRollTenant } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 import { DEFAULT_CHARGE_CODE_MAPPING } from '@/lib/rent-roll-types/mall-rent-roll-parser';
+import { downloadSemiFinalRR } from '@/lib/semi-final-export';
 import * as XLSX from 'xlsx';
 
 type Cell = string | number | Date | null;
