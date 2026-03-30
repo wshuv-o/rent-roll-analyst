@@ -10,7 +10,7 @@ export function FileUpload({ onFileSelect, isProcessing }: FileUploadProps) {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file && /\.(xlsx|xls)$/i.test(file.name)) {
+    if (file && /\.(xlsx|xls|csv)$/i.test(file.name)) {
       onFileSelect(file);
     }
   }, [onFileSelect]);
@@ -36,11 +36,11 @@ export function FileUpload({ onFileSelect, isProcessing }: FileUploadProps) {
           Drop Excel file here
         </div>
         <div className="font-mono text-xs text-muted-foreground">
-          .xlsx or .xls only
+          .xlsx, .xls, or .csv
         </div>
         <input
           type="file"
-          accept=".xlsx,.xls"
+          accept=".xlsx,.xls,.csv"
           onChange={handleChange}
           className="hidden"
           disabled={isProcessing}

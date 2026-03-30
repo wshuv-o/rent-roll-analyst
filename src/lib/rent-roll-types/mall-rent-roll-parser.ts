@@ -1,8 +1,7 @@
 // src/lib/rent-roll-types/mall-rent-roll-parser.ts
 //
 // Deterministic parser for JDE EnterpriseOne Mall Rent Roll exports.
-// Each tenant occupies a multi-row block: main row, charge lines, metadata, total, separator.
-// This parser collapses each block into a single MallRentRollTenant.
+// Supports both wide XLSX format (280+ cols) and narrow CSV format (~35 cols).
 
 type Cell = string | number | Date | null;
 type LogFn = (type: string, message: string) => void;
@@ -16,7 +15,7 @@ export interface MallChargeLine {
   endDate: Cell;
   monthlyAmount: number | null;
   annualRateSF: number | null;
-  chargeCategory: string | null; // Rent, CAM, UTL, RET, Relief, Excluded
+  chargeCategory: string | null;
 }
 
 export interface MallFutureEscalation {
@@ -27,6 +26,27 @@ export interface MallFutureEscalation {
   monthlyAmount: number | null;
   annualRateSF: number | null;
   percentInc: number | null;
+}
+
+export interface BumpPair { date: Cell; amount: Cell; percent?: Cell; }
+export interface BreakpointEntry { date: Cell; amount: Cell; percent: Cell; }
+
+export interface OverageEntry {
+  billCode: string;
+  beginDate: Cell;
+  endDate: Cell;
+  breakpoint: number | null;
+  percent: number | null;
+}
+
+export interface EscalationSummary {
+  code: Cell;
+  description: Cell;
+  beginDate: Cell;
+  endDate: Cell;
+  monthlyAmount: number | null;
+  rateSF: number | null;
+  count: number | null;
 }
 
 export interface MallRentRollTenant {
@@ -49,13 +69,71 @@ export interface MallRentRollTenant {
   totalMonthlyAmount: number | null;
 
   futureEscalations: MallFutureEscalation[];
+  overageEntries: OverageEntry[];
 
-  // Annual charge breakdown by individual code columns (cols 29-56)
   annualChargesByCode: Record<string, number>;
-  annualTotal: number | null; // col 80
+  annualTotal: number | null;
+  variance: number | null;
+
+  rentBumps: BumpPair[];
+  breakpoints: BreakpointEntry[];
+
+  camEscalation: EscalationSummary | null;
+  utlEscalation: EscalationSummary | null;
+  retEscalation: EscalationSummary | null;
+
+  camBumps: BumpPair[];
+  utlBumps: BumpPair[];
+  retBumps: BumpPair[];
+
+  buildingCode: Cell;
+  buildingName: Cell;
 
   rawRows: Cell[][];
 }
+
+// ─── Default charge code mapping ─────────────────────────────────────────────
+
+export interface ChargeCodeMapping {
+  code: string;
+  description: string;
+  category: string;
+  reliefSubType: string;
+}
+
+export const DEFAULT_CHARGE_CODE_MAPPING: ChargeCodeMapping[] = [
+  { code: 'BMRP', description: 'MINIMUM RENT',         category: 'Rent',     reliefSubType: '' },
+  { code: 'BMGP', description: 'GROSS RENT',           category: 'Rent',     reliefSubType: '' },
+  { code: 'BMRB', description: 'MINIMUM RENT',         category: 'Rent',     reliefSubType: '' },
+  { code: 'BMRE', description: 'MINIMUM RENT',         category: 'Rent',     reliefSubType: '' },
+  { code: 'CAFD', description: 'CAM FIXED',            category: 'CAM',      reliefSubType: '' },
+  { code: 'INPD', description: 'INSURANCE-PRORATA',    category: 'CAM',      reliefSubType: '' },
+  { code: 'CAID', description: 'CAM INDOOR PRORATA',   category: 'CAM',      reliefSubType: '' },
+  { code: 'CAOD', description: 'CAM OUTDOOR PRORATA',  category: 'CAM',      reliefSubType: '' },
+  { code: 'MKFP', description: 'MKT FUND',             category: 'CAM',      reliefSubType: '' },
+  { code: 'CAOO', description: 'CAM OUTDOOR PRORATA',  category: 'CAM',      reliefSubType: '' },
+  { code: 'CATP', description: 'CAM TOE',              category: 'CAM',      reliefSubType: '' },
+  { code: 'CATB', description: 'CAM TOE',              category: 'CAM',      reliefSubType: '' },
+  { code: 'FCFP', description: 'FIXED CAM FOOD CT',    category: 'CAM',      reliefSubType: '' },
+  { code: 'WTSP', description: 'WATER & SEWER',        category: 'UTL',      reliefSubType: '' },
+  { code: 'UTPP', description: 'UTILITIES',             category: 'UTL',      reliefSubType: '' },
+  { code: 'REPP', description: 'RET PRORATA',          category: 'RET',      reliefSubType: '' },
+  { code: 'REPB', description: 'RET PRORATA',          category: 'RET',      reliefSubType: '' },
+  { code: 'RRRT', description: 'RELIEF-MIN RENT',      category: 'Relief',   reliefSubType: 'Rent' },
+  { code: 'RRGR', description: 'RELIEF-GROSS BILLED',  category: 'Relief',   reliefSubType: 'Rent' },
+  { code: 'RRTS', description: 'RELIEF-RET PRO-RATA',  category: 'Relief',   reliefSubType: 'RET' },
+  { code: 'SPBM', description: 'SP RENT-12+',          category: 'Excluded', reliefSubType: '' },
+  { code: 'NRCT', description: 'NOTES REC-TENANT',     category: 'Excluded', reliefSubType: '' },
+  { code: 'DEFR', description: 'DEFERRED RENT',        category: 'Excluded', reliefSubType: '' },
+  { code: 'SPST', description: 'SP-STORAGE',           category: 'Excluded', reliefSubType: '' },
+  { code: 'BSTR', description: 'STORAGE RENT',         category: 'Excluded', reliefSubType: '' },
+  { code: 'BMAN', description: 'MIN RENT ANTENNA',     category: 'Excluded', reliefSubType: '' },
+  { code: 'BANT', description: 'RENT-TELECOM',         category: 'Excluded', reliefSubType: '' },
+  { code: 'PADC', description: 'TRASH PAD RENTAL',     category: 'Excluded', reliefSubType: '' },
+];
+
+export const CHARGE_CODES = DEFAULT_CHARGE_CODE_MAPPING.map(m => m.code);
+const MAPPING_BY_CODE = new Map(DEFAULT_CHARGE_CODE_MAPPING.map(m => [m.code, m]));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -68,7 +146,7 @@ function str(v: Cell): string {
 function num(v: Cell): number | null {
   if (typeof v === 'number') return v;
   if (typeof v === 'string') {
-    const n = parseFloat(v.replace(/,/g, '').trim());
+    const n = parseFloat(v.replace(/,/g, '').replace(/%$/, '').trim());
     return isNaN(n) ? null : n;
   }
   return null;
@@ -79,43 +157,55 @@ function cell(row: Cell[], idx: number): Cell {
   return row[idx] ?? null;
 }
 
+function extractBumps(row: Cell[], startCol: number, count: number): BumpPair[] {
+  const bumps: BumpPair[] = [];
+  for (let i = 0; i < count; i++) {
+    bumps.push({ date: cell(row, startCol + i * 2), amount: cell(row, startCol + i * 2 + 1) });
+  }
+  return bumps;
+}
+
+function extractBreakpoints(row: Cell[], startCol: number): BreakpointEntry[] {
+  const bps: BreakpointEntry[] = [];
+  bps.push({ date: cell(row, startCol), amount: cell(row, startCol + 1), percent: cell(row, startCol + 2) });
+  for (let i = 0; i < 5; i++) {
+    const base = startCol + 4 + i * 3;
+    bps.push({ date: cell(row, base), amount: cell(row, base + 1), percent: cell(row, base + 2) });
+  }
+  return bps;
+}
+
+function extractEscSummary(row: Cell[], startCol: number): EscalationSummary | null {
+  const code = cell(row, startCol + 1);
+  if (!code && !cell(row, startCol + 4)) return null;
+  return {
+    code: cell(row, startCol + 1), description: cell(row, startCol + 2),
+    beginDate: cell(row, startCol + 3), endDate: cell(row, startCol + 4),
+    monthlyAmount: num(cell(row, startCol + 5)), rateSF: num(cell(row, startCol + 6)),
+    count: num(cell(row, startCol + 7)),
+  };
+}
+
 // ─── Column index map ────────────────────────────────────────────────────────
 
 interface ColMap {
-  unit: number;
-  dba: number;
-  leaseId: number;
-  squareFootage: number;
-  leaseType: number;
-  unitType: number;
-  leaseStatus: number;
-  percentInLieu: number;
-  commencementDate: number;
-  originalEndDate: number;
-  expireCloseDate: number;
-  billCode: number;
-  expenseDescription: number;
-  beginDate: number;
-  endDate: number;
-  monthlyAmount: number;
-  rateSF: number;
-  chargeCategory: number; // col after rateSF (Rent/CAM/etc)
-  total: number;
-  // Future escalation columns
-  futureBillCode: number;
-  futureExpenseDesc: number;
-  futureBeginDate: number;
-  futureEndDate: number;
-  futureMonthlyAmt: number;
-  futureRateSF: number;
-  futurePercentInc: number;
-  // Category label column
-  categoryLabel: number;
+  unit: number; dba: number; leaseId: number; squareFootage: number;
+  leaseType: number; unitType: number; leaseStatus: number; percentInLieu: number;
+  commencementDate: number; originalEndDate: number; expireCloseDate: number;
+  billCode: number; expenseDescription: number; beginDate: number; endDate: number;
+  monthlyAmount: number; rateSF: number; chargeCategory: number; total: number;
+  variance: number;
+  futureBillCode: number; futureExpenseDesc: number; futureBeginDate: number;
+  futureEndDate: number; futureMonthlyAmt: number; futureRateSF: number; futurePercentInc: number;
+  overageBillCode: number; overageBeginDate: number; overageEndDate: number;
+  overageBreakpoint: number; overagePercent: number;
+  rentBumpStart: number; breakpointStart: number;
+  camEscStart: number; utlEscStart: number; retEscStart: number;
+  camBumpStart: number; utlBumpStart: number; retBumpStart: number;
+  categoryLabel: number; buildingCode: number; buildingName: number;
 }
 
-// Sorted longest-first so "unit type" matches before "unit", etc.
 const HEADER_KEYWORDS: [string, keyof ColMap, boolean][] = [
-  // [keyword, field, exactMatch]
   ['expense description', 'expenseDescription', false],
   ['commencement date',   'commencementDate',   false],
   ['original end date',   'originalEndDate',     false],
@@ -132,28 +222,31 @@ const HEADER_KEYWORDS: [string, keyof ColMap, boolean][] = [
   ['lease id',            'leaseId',             false],
   ['rate/sf',             'rateSF',              false],
   ['footage',             'squareFootage',       false],
-  ['unit',                'unit',                true],   // exact only — avoid matching "unit type"
+  ['unit',                'unit',                true],
   ['dba',                 'dba',                 true],
   ['code',                'billCode',            true],
   ['amount',              'monthlyAmount',       true],
 ];
+
+function buildMergedHeaders(data: Cell[][], headerRow: number): string[] {
+  const row = data[headerRow];
+  const prevRow = headerRow > 0 ? data[headerRow - 1] : null;
+  const maxCols = Math.max(row?.length ?? 0, prevRow?.length ?? 0);
+  const merged: string[] = [];
+  for (let c = 0; c < maxCols; c++) {
+    const top = prevRow ? str(prevRow[c] ?? null).toLowerCase().replace(/:$/, '').trim() : '';
+    const bot = str(row?.[c] ?? null).toLowerCase().replace(/:$/, '').trim();
+    merged[c] = top && bot ? `${top} ${bot}` : (bot || top);
+  }
+  return merged;
+}
 
 function findHeaderRow(data: Cell[][]): { headerRow: number; colMap: Partial<ColMap> } {
   for (let r = 0; r < Math.min(20, data.length); r++) {
     const row = data[r];
     if (!row) continue;
 
-    // Build merged header by combining this row with the row above (multi-row headers).
-    const prevRow = r > 0 ? data[r - 1] : null;
-    const mergedHeaders: string[] = [];
-    const maxCols = Math.max(row.length, prevRow?.length ?? 0);
-    for (let c = 0; c < maxCols; c++) {
-      const top = prevRow ? str(prevRow[c] ?? null).toLowerCase().replace(/:$/, '').trim() : '';
-      const bot = str(row[c] ?? null).toLowerCase().replace(/:$/, '').trim();
-      // Merge: "Begin" + "Date" → "begin date"
-      mergedHeaders[c] = top && bot ? `${top} ${bot}` : (bot || top);
-    }
-
+    const mergedHeaders = buildMergedHeaders(data, r);
     let matchCount = 0;
     const colMap: Partial<ColMap> = {};
     const assigned = new Set<number>();
@@ -161,7 +254,6 @@ function findHeaderRow(data: Cell[][]): { headerRow: number; colMap: Partial<Col
     for (let c = 0; c < mergedHeaders.length; c++) {
       const val = mergedHeaders[c];
       if (!val) continue;
-
       for (const [keyword, field, exact] of HEADER_KEYWORDS) {
         if (assigned.has(c)) break;
         const matches = exact ? val === keyword : val.includes(keyword);
@@ -172,17 +264,12 @@ function findHeaderRow(data: Cell[][]): { headerRow: number; colMap: Partial<Col
           break;
         }
       }
-
       if (val === 'total' && colMap.total === undefined) colMap.total = c;
     }
 
-    // Need at least 5 matches to consider this the header row
-    if (matchCount >= 5) {
-      return { headerRow: r, colMap };
-    }
+    if (matchCount >= 5) return { headerRow: r, colMap };
   }
 
-  // Fallback: use known default positions from JDE format
   return {
     headerRow: 10,
     colMap: {
@@ -190,94 +277,120 @@ function findHeaderRow(data: Cell[][]): { headerRow: number; colMap: Partial<Col
       leaseType: 8, unitType: 9, leaseStatus: 10, percentInLieu: 11,
       commencementDate: 12, originalEndDate: 13, expireCloseDate: 14,
       billCode: 15, expenseDescription: 16, beginDate: 17, endDate: 18,
-      monthlyAmount: 19, rateSF: 20, chargeCategory: 21,
-      total: 80,
+      monthlyAmount: 19, rateSF: 20, chargeCategory: 21, total: 80,
     },
   };
 }
 
-/** Detect future escalation columns and category column from section divider row */
-function findSectionColumns(data: Cell[][], headerRow: number): {
-  futureBillCode: number;
-  futureExpenseDesc: number;
-  futureBeginDate: number;
-  futureEndDate: number;
-  futureMonthlyAmt: number;
-  futureRateSF: number;
-  futurePercentInc: number;
-  categoryLabel: number;
-} {
-  // Look for "Future Rent" section divider in the rows before the header
-  // The future section typically starts around col 84
-  // Also scan the header row itself for matching labels in the future section
+// ─── Section detection (for narrow CSV format) ──────────────────────────────
 
-  const result = {
-    futureBillCode: 84,
-    futureExpenseDesc: 85,
-    futureBeginDate: 86,
-    futureEndDate: 87,
-    futureMonthlyAmt: 88,
-    futureRateSF: 89,
-    futurePercentInc: 90,
-    categoryLabel: 277,
+function detectSections(data: Cell[][], headerRow: number, mainBillCodeCol: number): {
+  isNarrow: boolean;
+  futureBillCode: number; futureExpenseDesc: number; futureBeginDate: number;
+  futureEndDate: number; futureMonthlyAmt: number; futureRateSF: number; futurePercentInc: number;
+  overageBillCode: number; overageBeginDate: number; overageEndDate: number;
+  overageBreakpoint: number; overagePercent: number;
+} {
+  const defaults = {
+    isNarrow: false,
+    futureBillCode: 84, futureExpenseDesc: 85, futureBeginDate: 86,
+    futureEndDate: 87, futureMonthlyAmt: 88, futureRateSF: 89, futurePercentInc: 90,
+    overageBillCode: -1, overageBeginDate: -1, overageEndDate: -1,
+    overageBreakpoint: -1, overagePercent: -1,
   };
 
-  // Scan divider rows for "Future Rent" to find the start column
+  // Strategy 1: find all "code"/"bill code" columns in merged headers
+  const mergedHeaders = buildMergedHeaders(data, headerRow);
+  const codeColumns: number[] = [];
+  for (let c = 0; c < mergedHeaders.length; c++) {
+    const val = mergedHeaders[c];
+    if (val === 'code' || val === 'bill code' || val.includes('bill code')) {
+      codeColumns.push(c);
+    }
+  }
+
+  // Strategy 2: find section labels in rows above header
+  let futureStart = -1, overageStart = -1;
   for (let r = Math.max(0, headerRow - 5); r < headerRow; r++) {
     const row = data[r];
     if (!row) continue;
-    for (let c = 50; c < row.length; c++) {
-      const val = str(row[c]).toLowerCase();
-      if (val.includes('future rent') || val.includes('future rent & expense')) {
-        // Found the start of future section; bill code should be at or near this col
-        result.futureBillCode = c;
-        result.futureExpenseDesc = c + 1;
-        result.futureBeginDate = c + 2;
-        result.futureEndDate = c + 3;
-        result.futureMonthlyAmt = c + 4;
-        result.futureRateSF = c + 5;
-        result.futurePercentInc = c + 6;
-        break;
+    for (let c = 0; c < row.length; c++) {
+      const val = str(row[c]).toLowerCase().replace(/-/g, ' ').trim();
+      if (!val) continue;
+      if (val.includes('future rent') || val.includes('expense escalation')) {
+        if (futureStart < 0) futureStart = c;
+      } else if (val.includes('overage') || val.includes('in lieu rent')) {
+        if (overageStart < 0) overageStart = c;
       }
     }
   }
 
-  // Scan header row for the future section labels to refine positions
-  const hrow = data[headerRow];
-  if (hrow) {
-    // Look for Bill Code / Code in future section area (col 60+)
-    for (let c = 60; c < hrow.length; c++) {
-      const val = str(hrow[c]).toLowerCase();
-      if ((val === 'bill code' || val === 'code') && c > 50) {
-        result.futureBillCode = c;
-        break;
+  // If we found multiple code columns, this is narrow format
+  if (codeColumns.length >= 2) {
+    const fc = codeColumns[1];
+    const result = {
+      isNarrow: true,
+      futureBillCode: fc,
+      futureExpenseDesc: fc + 1,
+      futureBeginDate: fc + 2,
+      futureEndDate: fc + 3,
+      futureMonthlyAmt: fc + 4,
+      futureRateSF: fc + 5,
+      futurePercentInc: fc + 6,
+      overageBillCode: -1, overageBeginDate: -1, overageEndDate: -1,
+      overageBreakpoint: -1, overagePercent: -1,
+    };
+
+    if (codeColumns.length >= 3) {
+      const oc = codeColumns[2];
+      result.overageBillCode = oc;
+      result.overageBeginDate = oc + 1;
+      result.overageEndDate = oc + 2;
+      // Find breakpoint column near overage section
+      for (let c = oc + 1; c < oc + 6 && c < mergedHeaders.length; c++) {
+        if (mergedHeaders[c].includes('breakpoint')) {
+          result.overageBreakpoint = c;
+          result.overagePercent = c + 1;
+          break;
+        }
       }
+      if (result.overageBreakpoint < 0) {
+        result.overageBreakpoint = oc + 3;
+        result.overagePercent = oc + 4;
+      }
+    }
+    return result;
+  }
+
+  // If section labels found but code columns not duplicated, use section starts
+  if (futureStart > 0) {
+    const fc = futureStart;
+    defaults.isNarrow = true;
+    defaults.futureBillCode = fc;
+    defaults.futureExpenseDesc = fc + 1;
+    defaults.futureBeginDate = fc + 2;
+    defaults.futureEndDate = fc + 3;
+    defaults.futureMonthlyAmt = fc + 4;
+    defaults.futureRateSF = fc + 5;
+    defaults.futurePercentInc = fc + 6;
+
+    if (overageStart > 0) {
+      defaults.overageBillCode = overageStart;
+      defaults.overageBeginDate = overageStart + 1;
+      defaults.overageEndDate = overageStart + 2;
+      defaults.overageBreakpoint = overageStart + 3;
+      defaults.overagePercent = overageStart + 4;
     }
   }
 
-  // Find category label column - typically the rightmost column with category names
-  // Check the first data row after headers for a column containing category labels
-  for (let r = headerRow + 1; r < Math.min(headerRow + 5, data.length); r++) {
-    const row = data[r];
-    if (!row) continue;
-    for (let c = row.length - 1; c >= 200; c--) {
-      const val = str(row[c]).toLowerCase();
-      if (val === 'anchor' || val === 'outparcel' || val === 'specialty') {
-        result.categoryLabel = c;
-        break;
-      }
-    }
-    if (result.categoryLabel !== 277) break;
-  }
-
-  return result;
+  return defaults;
 }
 
-/** Build a map of annual charge code columns from row 9 (sub-headers) */
+// ─── Charge code column detection ───────────────────────────────────────────
+
 function findChargeCodeColumns(data: Cell[][], headerRow: number): { col: number; code: string }[] {
-  // The charge code names appear in the row above the header row (or 2 rows above)
   const codes: { col: number; code: string }[] = [];
-  // Check 1-2 rows above header
+  const knownCodes = new Set(CHARGE_CODES);
   for (let offset = 1; offset <= 2; offset++) {
     const r = headerRow - offset;
     if (r < 0) continue;
@@ -285,13 +398,44 @@ function findChargeCodeColumns(data: Cell[][], headerRow: number): { col: number
     if (!row) continue;
     for (let c = 28; c < 80 && c < row.length; c++) {
       const val = str(row[c]).toUpperCase();
-      if (val && /^[A-Z]{3,5}$/.test(val)) {
-        codes.push({ col: c, code: val });
-      }
+      if (val && knownCodes.has(val)) codes.push({ col: c, code: val });
     }
     if (codes.length > 0) break;
   }
-  return codes;
+  if (codes.length > 0) return codes;
+
+  const descToCodes = new Map<string, string[]>();
+  for (const m of DEFAULT_CHARGE_CODE_MAPPING) {
+    const key = m.description.toUpperCase();
+    const arr = descToCodes.get(key) || [];
+    arr.push(m.code);
+    descToCodes.set(key, arr);
+  }
+  const usageIdx = new Map<string, number>();
+  for (let offset = 1; offset <= 3; offset++) {
+    const r = headerRow - offset;
+    if (r < 0) continue;
+    const row = data[r];
+    if (!row) continue;
+    let found = 0;
+    for (let c = 28; c < 80 && c < row.length; c++) {
+      const val = str(row[c]).toUpperCase();
+      if (!val) continue;
+      const candidates = descToCodes.get(val);
+      if (candidates) {
+        const idx = usageIdx.get(val) || 0;
+        if (idx < candidates.length) {
+          codes.push({ col: c, code: candidates[idx] });
+          usageIdx.set(val, idx + 1);
+          found++;
+        }
+      }
+    }
+    if (found >= 5) break;
+  }
+  if (codes.length > 0) return codes;
+
+  return CHARGE_CODES.map((code, i) => ({ col: 29 + i, code }));
 }
 
 // ─── Metadata extraction ─────────────────────────────────────────────────────
@@ -310,242 +454,311 @@ const METADATA_LABELS: Record<string, keyof Pick<MallRentRollTenant,
   'expire/close date': 'expireCloseDate',
 };
 
-function extractMetadata(
-  row: Cell[],
-  tenant: MallRentRollTenant,
-  labelCol: number,
-  valueCol: number,
-): boolean {
+function extractMetadata(row: Cell[], tenant: MallRentRollTenant, labelCol: number, valueCol: number): boolean {
   const rawLabel = str(cell(row, labelCol));
   if (!rawLabel.includes(':')) return false;
-
   const label = rawLabel.replace(':', '').trim().toLowerCase();
   const field = METADATA_LABELS[label];
   if (!field) return false;
-
-  const value = cell(row, valueCol);
-  (tenant as Record<string, Cell>)[field] = value;
+  (tenant as unknown as Record<string, Cell>)[field] = cell(row, valueCol);
   return true;
+}
+
+// ─── Overage extraction helper ──────────────────────────────────────────────
+
+function tryExtractOverage(row: Cell[], C: ColMap, tenant: MallRentRollTenant) {
+  if (C.overageBillCode < 0) return;
+  const overageBill = str(cell(row, C.overageBillCode));
+  if (overageBill) {
+    tenant.overageEntries.push({
+      billCode: overageBill,
+      beginDate: cell(row, C.overageBeginDate),
+      endDate: cell(row, C.overageEndDate),
+      breakpoint: num(cell(row, C.overageBreakpoint)),
+      percent: num(cell(row, C.overagePercent)),
+    });
+  }
+}
+
+// ─── Post-processing: derive bumps/breakpoints ─────────────────────────────
+
+function deriveFromEscalationsAndOverage(tenants: MallRentRollTenant[], isNarrow: boolean) {
+  if (!isNarrow) return; // Wide format already extracted bumps from columns
+
+  for (const t of tenants) {
+    // Derive breakpoints from overage entries
+    t.breakpoints = t.overageEntries.map(oe => ({
+      date: oe.beginDate,
+      amount: oe.breakpoint,
+      percent: oe.percent,
+    }));
+
+    // Derive rent bumps from future escalations with Rent category
+    const rentFutures = t.futureEscalations.filter(fe => {
+      const m = MAPPING_BY_CODE.get(fe.billCode);
+      return m?.category === 'Rent';
+    });
+    t.rentBumps = rentFutures.map(fe => ({
+      date: fe.beginDate,
+      amount: fe.annualRateSF, // Rate/SF for rent bumps
+      percent: fe.percentInc,
+    }));
+
+    // Derive CAM bumps from future escalations with CAM category
+    const camFutures = t.futureEscalations.filter(fe => {
+      const m = MAPPING_BY_CODE.get(fe.billCode);
+      return m?.category === 'CAM';
+    });
+    t.camBumps = camFutures.map(fe => ({
+      date: fe.beginDate,
+      amount: fe.monthlyAmount !== null ? fe.monthlyAmount * 12 : null,
+      percent: fe.percentInc,
+    }));
+
+    // Derive UTL bumps
+    const utlFutures = t.futureEscalations.filter(fe => {
+      const m = MAPPING_BY_CODE.get(fe.billCode);
+      return m?.category === 'UTL';
+    });
+    t.utlBumps = utlFutures.map(fe => ({
+      date: fe.beginDate,
+      amount: fe.monthlyAmount !== null ? fe.monthlyAmount * 12 : null,
+      percent: fe.percentInc,
+    }));
+
+    // Derive RET bumps
+    const retFutures = t.futureEscalations.filter(fe => {
+      const m = MAPPING_BY_CODE.get(fe.billCode);
+      return m?.category === 'RET';
+    });
+    t.retBumps = retFutures.map(fe => ({
+      date: fe.beginDate,
+      amount: fe.monthlyAmount !== null ? fe.monthlyAmount * 12 : null,
+      percent: fe.percentInc,
+    }));
+  }
 }
 
 // ─── Main parser ─────────────────────────────────────────────────────────────
 
-export function parseMallRentRoll(
-  data: Cell[][],
-  addLog?: LogFn,
-): MallRentRollTenant[] {
+export function parseMallRentRoll(data: Cell[][], addLog?: LogFn): MallRentRollTenant[] {
   const log = addLog || (() => {});
   const tenants: MallRentRollTenant[] = [];
 
-  // 1. Find header row and column map
   const { headerRow, colMap } = findHeaderRow(data);
   log('system', `Header row detected at row ${headerRow + 1}`);
 
-  // 2. Find section columns (future escalations, category)
-  const sectionCols = findSectionColumns(data, headerRow);
-  const fullColMap: ColMap = {
-    unit: colMap.unit ?? 2,
-    dba: colMap.dba ?? 3,
-    leaseId: colMap.leaseId ?? 4,
-    squareFootage: colMap.squareFootage ?? 7,
-    leaseType: colMap.leaseType ?? 8,
-    unitType: colMap.unitType ?? 9,
-    leaseStatus: colMap.leaseStatus ?? 10,
-    percentInLieu: colMap.percentInLieu ?? 11,
-    commencementDate: colMap.commencementDate ?? 12,
-    originalEndDate: colMap.originalEndDate ?? 13,
+  // Detect sections (narrow CSV vs wide XLSX)
+  const sections = detectSections(data, headerRow, colMap.billCode ?? 7);
+  log('system', `Format: ${sections.isNarrow ? 'narrow CSV' : 'wide XLSX'}, future bill code col: ${sections.futureBillCode}, overage bill code col: ${sections.overageBillCode}`);
+
+  const C: ColMap = {
+    unit: colMap.unit ?? 0, dba: colMap.dba ?? 1, leaseId: colMap.leaseId ?? 2,
+    squareFootage: colMap.squareFootage ?? 5,
+    leaseType: colMap.leaseType ?? 8, unitType: colMap.unitType ?? 9,
+    leaseStatus: colMap.leaseStatus ?? 10, percentInLieu: colMap.percentInLieu ?? 11,
+    commencementDate: colMap.commencementDate ?? 12, originalEndDate: colMap.originalEndDate ?? 13,
     expireCloseDate: colMap.expireCloseDate ?? 14,
-    billCode: colMap.billCode ?? 15,
-    expenseDescription: colMap.expenseDescription ?? 16,
-    beginDate: colMap.beginDate ?? 17,
-    endDate: colMap.endDate ?? 18,
-    monthlyAmount: colMap.monthlyAmount ?? 19,
-    rateSF: colMap.rateSF ?? 20,
-    chargeCategory: colMap.chargeCategory ?? 21,
-    total: colMap.total ?? 80,
-    ...sectionCols,
+    billCode: colMap.billCode ?? 7, expenseDescription: colMap.expenseDescription ?? 8,
+    beginDate: colMap.beginDate ?? 9, endDate: colMap.endDate ?? 10,
+    monthlyAmount: colMap.monthlyAmount ?? 11, rateSF: colMap.rateSF ?? 12,
+    chargeCategory: colMap.chargeCategory ?? 21, total: colMap.total ?? 80,
+    variance: 81,
+    futureBillCode: sections.futureBillCode,
+    futureExpenseDesc: sections.futureExpenseDesc,
+    futureBeginDate: sections.futureBeginDate,
+    futureEndDate: sections.futureEndDate,
+    futureMonthlyAmt: sections.futureMonthlyAmt,
+    futureRateSF: sections.futureRateSF,
+    futurePercentInc: sections.futurePercentInc,
+    overageBillCode: sections.overageBillCode,
+    overageBeginDate: sections.overageBeginDate,
+    overageEndDate: sections.overageEndDate,
+    overageBreakpoint: sections.overageBreakpoint,
+    overagePercent: sections.overagePercent,
+    rentBumpStart: 93, breakpointStart: 145,
+    camEscStart: 177, utlEscStart: 185, retEscStart: 193,
+    camBumpStart: 202, utlBumpStart: 227, retBumpStart: 252,
+    categoryLabel: 277, buildingCode: 285, buildingName: 286,
   };
 
-  // 3. Find annual charge code columns
-  const chargeCodeCols = findChargeCodeColumns(data, headerRow);
-
-  // 4. Extract property metadata from top rows
-  let propertyName = '';
-  for (let r = 0; r < headerRow; r++) {
+  // Detect category label column
+  for (let r = headerRow + 1; r < Math.min(headerRow + 5, data.length); r++) {
     const row = data[r];
     if (!row) continue;
-    for (const c of row) {
-      const v = str(c);
-      if (v.toLowerCase().includes('mall') || v.toLowerCase().includes('property')) {
-        // Check if this looks like a property name (not a header keyword)
-        if (v.length > 10 && !v.includes('---')) {
-          propertyName = v;
-          break;
-        }
+    for (let c = row.length - 1; c >= 200; c--) {
+      const val = str(row[c]).toLowerCase();
+      if (val === 'anchor' || val === 'outparcel' || val === 'specialty' || val === 'inline') {
+        C.categoryLabel = c;
+        break;
       }
     }
+    if (C.categoryLabel !== 277) break;
   }
 
-  // 5. Walk data rows
+  const chargeCodeCols = sections.isNarrow ? [] : findChargeCodeColumns(data, headerRow);
+  if (!sections.isNarrow) {
+    log('system', `Found ${chargeCodeCols.length} charge code columns`);
+  }
+
   let currentTenant: MallRentRollTenant | null = null;
   let currentCategory = '';
-  const dataStart = headerRow + 1;
 
-  // Sometimes there's a category row right after header (or mixed in)
-  // Category rows have col 277 (or categoryLabel) with text like "Anchor"
-
-  for (let r = dataStart; r < data.length; r++) {
+  for (let r = headerRow + 1; r < data.length; r++) {
     const row = data[r];
     if (!row || row.length === 0) continue;
 
-    const unitVal = str(cell(row, fullColMap.unit));
-    const dbaVal = str(cell(row, fullColMap.dba));
-    const billCodeVal = str(cell(row, fullColMap.billCode));
-    const leaseIdVal = str(cell(row, fullColMap.leaseId));
-    const col0 = num(cell(row, 0));
+    const unitVal = str(cell(row, C.unit));
+    const dbaVal = str(cell(row, C.dba));
+    const billCodeVal = str(cell(row, C.billCode));
 
-    // Track category from the category label column
-    const catVal = str(cell(row, fullColMap.categoryLabel));
-    if (catVal && catVal !== currentCategory) {
-      currentCategory = catVal;
+    const catVal = str(cell(row, C.categoryLabel));
+    if (catVal && catVal !== currentCategory) currentCategory = catVal;
+
+    // Space type row: only unit column has a value
+    if (unitVal && !dbaVal && !billCodeVal) {
+      const otherVals = row.filter((v, ci) => ci !== C.unit && v !== null && v !== undefined && String(v).trim() !== '');
+      if (otherVals.length === 0) {
+        currentCategory = unitVal;
+        log('system', `Space type detected: "${unitVal}"`);
+        continue;
+      }
     }
 
-    // Check for "Total :" row
-    const expDescVal = str(cell(row, fullColMap.expenseDescription));
+    // Total row
+    const expDescVal = str(cell(row, C.expenseDescription));
     if (expDescVal.toLowerCase().includes('total')) {
       if (currentTenant) {
-        currentTenant.totalMonthlyAmount = num(cell(row, fullColMap.monthlyAmount));
+        currentTenant.totalMonthlyAmount = num(cell(row, C.monthlyAmount));
         currentTenant.rawRows.push([...row]);
       }
       continue;
     }
 
-    // New tenant: Unit and DBA both present (col0 === 0 is also a reliable indicator)
-    if (unitVal && dbaVal && (col0 === 0 || col0 === null)) {
-      // Finalize previous tenant
-      if (currentTenant) {
-        tenants.push(currentTenant);
-      }
+    // New tenant: unit + dba present
+    if (unitVal && dbaVal) {
+      if (currentTenant) tenants.push(currentTenant);
 
       currentTenant = {
-        unit: unitVal,
-        dba: dbaVal,
-        leaseId: leaseIdVal,
-        squareFootage: num(cell(row, fullColMap.squareFootage)),
+        unit: unitVal, dba: dbaVal, leaseId: str(cell(row, C.leaseId)),
+        squareFootage: num(cell(row, C.squareFootage)),
         category: currentCategory,
-
-        leaseType: str(cell(row, fullColMap.leaseType)) || null,
-        unitType: str(cell(row, fullColMap.unitType)) || null,
-        leaseStatus: str(cell(row, fullColMap.leaseStatus)) || null,
-        percentInLieu: cell(row, fullColMap.percentInLieu),
-        commencementDate: cell(row, fullColMap.commencementDate),
+        leaseType: str(cell(row, C.leaseType)) || null,
+        unitType: str(cell(row, C.unitType)) || null,
+        leaseStatus: str(cell(row, C.leaseStatus)) || null,
+        percentInLieu: cell(row, C.percentInLieu),
+        commencementDate: cell(row, C.commencementDate),
         openDate: null,
-        originalEndDate: cell(row, fullColMap.originalEndDate),
-        expireCloseDate: cell(row, fullColMap.expireCloseDate),
-
-        charges: [],
-        totalMonthlyAmount: null,
+        originalEndDate: cell(row, C.originalEndDate),
+        expireCloseDate: cell(row, C.expireCloseDate),
+        charges: [], totalMonthlyAmount: null,
         futureEscalations: [],
+        overageEntries: [],
         annualChargesByCode: {},
-        annualTotal: num(cell(row, fullColMap.total)),
+        annualTotal: num(cell(row, C.total)),
+        variance: num(cell(row, C.variance)),
+        // For wide format, extract from columns; for narrow, derive later
+        rentBumps: sections.isNarrow ? [] : extractBumps(row, C.rentBumpStart, 18),
+        breakpoints: sections.isNarrow ? [] : extractBreakpoints(row, C.breakpointStart),
+        camEscalation: sections.isNarrow ? null : extractEscSummary(row, C.camEscStart),
+        utlEscalation: sections.isNarrow ? null : extractEscSummary(row, C.utlEscStart),
+        retEscalation: sections.isNarrow ? null : extractEscSummary(row, C.retEscStart),
+        camBumps: sections.isNarrow ? [] : extractBumps(row, C.camBumpStart, 12),
+        utlBumps: sections.isNarrow ? [] : extractBumps(row, C.utlBumpStart, 12),
+        retBumps: sections.isNarrow ? [] : extractBumps(row, C.retBumpStart, 12),
+        buildingCode: cell(row, C.buildingCode),
+        buildingName: cell(row, C.buildingName),
         rawRows: [[...row]],
       };
 
-      // Extract first charge line from main row
+      // First charge line
       if (billCodeVal) {
         currentTenant.charges.push({
-          billCode: billCodeVal,
-          expenseDescription: str(cell(row, fullColMap.expenseDescription)),
-          beginDate: cell(row, fullColMap.beginDate),
-          endDate: cell(row, fullColMap.endDate),
-          monthlyAmount: num(cell(row, fullColMap.monthlyAmount)),
-          annualRateSF: num(cell(row, fullColMap.rateSF)),
-          chargeCategory: str(cell(row, fullColMap.chargeCategory)) || null,
+          billCode: billCodeVal, expenseDescription: str(cell(row, C.expenseDescription)),
+          beginDate: cell(row, C.beginDate), endDate: cell(row, C.endDate),
+          monthlyAmount: num(cell(row, C.monthlyAmount)), annualRateSF: num(cell(row, C.rateSF)),
+          chargeCategory: str(cell(row, C.chargeCategory)) || null,
         });
       }
 
-      // Extract future escalation from main row
-      const futureBill = str(cell(row, fullColMap.futureBillCode));
+      // Future escalation
+      const futureBill = str(cell(row, C.futureBillCode));
       if (futureBill) {
         currentTenant.futureEscalations.push({
-          billCode: futureBill,
-          expenseDescription: str(cell(row, fullColMap.futureExpenseDesc)),
-          beginDate: cell(row, fullColMap.futureBeginDate),
-          endDate: cell(row, fullColMap.futureEndDate),
-          monthlyAmount: num(cell(row, fullColMap.futureMonthlyAmt)),
-          annualRateSF: num(cell(row, fullColMap.futureRateSF)),
-          percentInc: num(cell(row, fullColMap.futurePercentInc)),
+          billCode: futureBill, expenseDescription: str(cell(row, C.futureExpenseDesc)),
+          beginDate: cell(row, C.futureBeginDate), endDate: cell(row, C.futureEndDate),
+          monthlyAmount: num(cell(row, C.futureMonthlyAmt)), annualRateSF: num(cell(row, C.futureRateSF)),
+          percentInc: num(cell(row, C.futurePercentInc)),
         });
       }
 
-      // Extract annual charges by code
+      // Overage/breakpoint
+      tryExtractOverage(row, C, currentTenant);
+
+      // Annual charges by code (wide format only)
       for (const { col, code } of chargeCodeCols) {
         const val = num(cell(row, col));
-        if (val !== null) {
-          currentTenant.annualChargesByCode[code] = val;
-        }
+        if (val !== null) currentTenant.annualChargesByCode[code] = val;
       }
-
       continue;
     }
 
-    // No current tenant — skip
     if (!currentTenant) continue;
 
-    // Additional charge line: bill code present, no unit/DBA
+    // Additional charge line
     if (billCodeVal && !unitVal) {
       currentTenant.charges.push({
-        billCode: billCodeVal,
-        expenseDescription: str(cell(row, fullColMap.expenseDescription)),
-        beginDate: cell(row, fullColMap.beginDate),
-        endDate: cell(row, fullColMap.endDate),
-        monthlyAmount: num(cell(row, fullColMap.monthlyAmount)),
-        annualRateSF: num(cell(row, fullColMap.rateSF)),
-        chargeCategory: str(cell(row, fullColMap.chargeCategory)) || null,
+        billCode: billCodeVal, expenseDescription: str(cell(row, C.expenseDescription)),
+        beginDate: cell(row, C.beginDate), endDate: cell(row, C.endDate),
+        monthlyAmount: num(cell(row, C.monthlyAmount)), annualRateSF: num(cell(row, C.rateSF)),
+        chargeCategory: str(cell(row, C.chargeCategory)) || null,
       });
-
-      // Also check for future escalation on this row
-      const futureBill = str(cell(row, fullColMap.futureBillCode));
+      const futureBill = str(cell(row, C.futureBillCode));
       if (futureBill) {
         currentTenant.futureEscalations.push({
-          billCode: futureBill,
-          expenseDescription: str(cell(row, fullColMap.futureExpenseDesc)),
-          beginDate: cell(row, fullColMap.futureBeginDate),
-          endDate: cell(row, fullColMap.futureEndDate),
-          monthlyAmount: num(cell(row, fullColMap.futureMonthlyAmt)),
-          annualRateSF: num(cell(row, fullColMap.futureRateSF)),
-          percentInc: num(cell(row, fullColMap.futurePercentInc)),
+          billCode: futureBill, expenseDescription: str(cell(row, C.futureExpenseDesc)),
+          beginDate: cell(row, C.futureBeginDate), endDate: cell(row, C.futureEndDate),
+          monthlyAmount: num(cell(row, C.futureMonthlyAmt)), annualRateSF: num(cell(row, C.futureRateSF)),
+          percentInc: num(cell(row, C.futurePercentInc)),
         });
       }
-
+      tryExtractOverage(row, C, currentTenant);
       currentTenant.rawRows.push([...row]);
       continue;
     }
 
-    // Metadata row: col 4 (leaseId column) contains a label with ":"
-    if (extractMetadata(row, currentTenant, fullColMap.leaseId, fullColMap.leaseId + 2)) {
-      currentTenant.rawRows.push([...row]);
-      continue;
-    }
+    // Metadata row — also check for future escalation & overage on same row
+    const metadataFound = extractMetadata(row, currentTenant, C.leaseId, C.leaseId + 2);
 
-    // Separator row (col0 === 1 or fully empty) — just skip
+    // Even on metadata/other rows, check for future escalations and overage
+    const futureBill = str(cell(row, C.futureBillCode));
+    if (futureBill) {
+      currentTenant.futureEscalations.push({
+        billCode: futureBill, expenseDescription: str(cell(row, C.futureExpenseDesc)),
+        beginDate: cell(row, C.futureBeginDate), endDate: cell(row, C.futureEndDate),
+        monthlyAmount: num(cell(row, C.futureMonthlyAmt)), annualRateSF: num(cell(row, C.futureRateSF)),
+        percentInc: num(cell(row, C.futurePercentInc)),
+      });
+    }
+    tryExtractOverage(row, C, currentTenant);
     currentTenant.rawRows.push([...row]);
   }
 
-  // Finalize last tenant
-  if (currentTenant) {
-    tenants.push(currentTenant);
-  }
+  if (currentTenant) tenants.push(currentTenant);
+
+  // Post-process: derive bumps/breakpoints from future escalations and overage
+  deriveFromEscalationsAndOverage(tenants, sections.isNarrow);
 
   log('system', `Parsed ${tenants.length} tenants from Mall Rent Roll.`);
-
-  // Log category breakdown
   const categories = new Map<string, number>();
-  for (const t of tenants) {
-    categories.set(t.category, (categories.get(t.category) || 0) + 1);
-  }
-  const catSummary = [...categories.entries()].map(([k, v]) => `${k || 'Uncategorized'}: ${v}`).join(', ');
-  log('system', `Categories: ${catSummary}`);
+  for (const t of tenants) categories.set(t.category, (categories.get(t.category) || 0) + 1);
+  log('system', `Categories: ${[...categories.entries()].map(([k, v]) => `${k || 'Uncategorized'}: ${v}`).join(', ')}`);
+
+  // Log sample future escalations and breakpoints for debugging
+  const withFuture = tenants.filter(t => t.futureEscalations.length > 0);
+  log('system', `Tenants with future escalations: ${withFuture.length}`);
+  const withBreakpoints = tenants.filter(t => t.breakpoints.length > 0);
+  log('system', `Tenants with breakpoints: ${withBreakpoints.length}`);
 
   return tenants;
 }
