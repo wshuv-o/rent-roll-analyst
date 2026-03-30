@@ -3,7 +3,7 @@ import type { ParsingInstruction, ColumnGroupId, GroupSpan, CustomGroup } from '
 import { COLUMN_GROUPS, CUSTOM_GROUP_HUES } from '@/lib/types';
 
 interface SpreadsheetViewerProps {
-  data: (string | number | null)[][];
+  data: (string | number | Date | null)[][];
   instruction: ParsingInstruction | null;
   headerRows: number[];
   groupSpans: GroupSpan[];
