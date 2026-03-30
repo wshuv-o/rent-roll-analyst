@@ -423,13 +423,11 @@ export function parseMallRentRoll(data: Cell[][], addLog?: LogFn): MallRentRollT
     const unitVal = str(cell(row, C.unit));
     const dbaVal = str(cell(row, C.dba));
     const billCodeVal = str(cell(row, C.billCode));
-    const col0 = num(cell(row, 0));
 
     const catVal = str(cell(row, C.categoryLabel));
     if (catVal && catVal !== currentCategory) currentCategory = catVal;
 
     // Space type row: only unit column has a value (e.g. "Anchor", "Inline", "Outparcel")
-    // These rows have no DBA, no bill code, no sqft — just a label in the unit column
     if (unitVal && !dbaVal && !billCodeVal) {
       const otherVals = row.filter((v, ci) => ci !== C.unit && v !== null && v !== undefined && String(v).trim() !== '');
       if (otherVals.length === 0) {
@@ -449,8 +447,8 @@ export function parseMallRentRoll(data: Cell[][], addLog?: LogFn): MallRentRollT
       continue;
     }
 
-    // New tenant
-    if (unitVal && dbaVal && (col0 === 0 || col0 === null)) {
+    // New tenant: unit + dba present
+    if (unitVal && dbaVal) {
       if (currentTenant) tenants.push(currentTenant);
 
       currentTenant = {
