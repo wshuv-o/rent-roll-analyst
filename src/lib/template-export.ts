@@ -63,8 +63,9 @@ function makeCategoryStyle(bg: string): Record<string, unknown> {
 }
 
 /** Parse a raw cell value to number, stripping currency symbols */
-function toNumber(val: string | number | null): number {
+function toNumber(val: string | number | Date | null): number {
   if (val === null || val === undefined || val === '') return 0;
+  if (val instanceof Date) return 0;
   if (typeof val === 'number') return val;
   const n = parseFloat(String(val).replace(/[,$%]/g, ''));
   return isNaN(n) ? 0 : n;
