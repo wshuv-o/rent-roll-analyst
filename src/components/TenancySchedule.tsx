@@ -398,47 +398,241 @@ function downloadXLSX(
   fileName: string,
   mappings: Record<string, string> = {},
 ) {
-  // Insert a "Category" column immediately after chargeType in the schedule group.
-  const catInsertAfter = COLS.findIndex(c => c.key === 'chargeType');
+  type X = string | number | Date | null;
 
-  const header: string[] = COLS.map(c => c.label);
-  if (catInsertAfter >= 0) header.splice(catInsertAfter + 1, 0, 'Category');
+  // ── Main columns (Property → Security Deposit) ────────────────────────────
+  const MAIN_KEYS: (keyof FlatRow)[] = [
+    'property', 'unit', 'lease', 'leaseType', 'area',
+    'leaseFrom', 'leaseTo', 'monthlyRent', 'annualRent', 'securityDepositReceived',
+  ];
+  const MAIN_HDRS = [
+    'Property', 'Unit', 'Tenant', 'Lease Type', 'Area (sqft)',
+    'Lease From', 'Lease To', 'Monthly Rent', 'Annual Rent', 'Security Deposit',
+  ];
+  const nM = MAIN_KEYS.length;
 
-  const wsData: (string | number | Date | null)[][] = [header];
-
+  // ── Group flat rows by tenant ─────────────────────────────────────────────
+  interface TG { base: FlatRow; rs: FlatRow[]; cs: FlatRow[] }
+  const tMap = new Map<number, TG>();
   for (const row of rows) {
-    const dataRow: (string | number | Date | null)[] = COLS.map(col => {
-      if (col.key === '_isSplit') return null;
-      const v = row[col.key];
-      if (v instanceof Date) return v;
-      if (typeof v === 'number') return v;
-      return (v as string | null);
-    });
+    const i = row._tenantIdx;
+    if (!tMap.has(i)) tMap.set(i, { base: row, rs: [], cs: [] });
+    const g = tMap.get(i)!;
+    const sec = String(row._section ?? '').toLowerCase();
+    if (sec.includes('rent') && sec.includes('step')) g.rs.push(row);
+    else if (row._section) g.cs.push(row);
+  }
+  const tenants = [...tMap.values()];
 
-    if (catInsertAfter >= 0) {
-      const k   = pairKey(String(row.charge ?? ''), String(row.chargeType ?? ''));
-      dataRow.splice(catInsertAfter + 1, 0, mappings[k] ?? null);
+  // ── Per-tenant RS key sets: compound (charge + fromDate) ─────────────────
+  // Used to exclude from CS only those (charge, date) pairs already in RS for that tenant.
+  const rsKeySetByTenant = new Map<number, Set<string>>();
+  for (const [idx, { rs }] of tMap.entries()) {
+    const ks = new Set<string>();
+    for (const r of rs) {
+      const c = String(r.charge ?? '').trim();
+      const f = r.from instanceof Date ? r.from.toISOString() : String(r.from ?? '').trim();
+      if (c) ks.add(`${c}\x00${f}`);
     }
-
-    wsData.push(dataRow);
+    rsKeySetByTenant.set(idx, ks);
   }
 
-  const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true });
+  // Filter a tenant's CS rows: remove any (charge, from) already present in their RS
+  const filteredCS = (tenantIdx: number, cs: FlatRow[]): FlatRow[] => {
+    const ks = rsKeySetByTenant.get(tenantIdx) ?? new Set<string>();
+    if (ks.size === 0) return cs;
+    return cs.filter(r => {
+      const c = String(r.charge ?? '').trim();
+      const f = r.from instanceof Date ? r.from.toISOString() : String(r.from ?? '').trim();
+      return !ks.has(`${c}\x00${f}`);
+    });
+  };
+
+  // ── Helper: date value → sort key ────────────────────────────────────────
+  const dNum = (v: Cell): number => {
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === 'number') return v;
+    if (typeof v === 'string') { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
+    return 0;
+  };
+
+  // ── Unique charge codes for Rent Steps ───────────────────────────────────
+  const rsCodes: string[] = [];
+  const rsSet = new Set<string>();
+  for (const { rs } of tenants)
+    for (const r of rs) { const c = String(r.charge ?? '').trim(); if (c && !rsSet.has(c)) { rsSet.add(c); rsCodes.push(c); } }
+
+  const rsMax: Record<string, number> = Object.fromEntries(rsCodes.map(c => [c, 0]));
+  for (const { rs } of tenants) {
+    const cnt: Record<string, number> = {};
+    for (const r of rs) { const c = String(r.charge ?? '').trim(); if (c) cnt[c] = (cnt[c] ?? 0) + 1; }
+    for (const c of rsCodes) rsMax[c] = Math.max(rsMax[c], cnt[c] ?? 0);
+  }
+
+  // ── Unique charge codes for Charge Schedules ─────────────────────────────
+  // A code gets a CS column if any tenant has CS rows for it after per-tenant
+  // (charge, from) exclusion. Codes can overlap with rsCodes — that's intentional.
+  const csCodes: string[] = [];
+  const csSet = new Set<string>();
+  const codeType: Record<string, string> = {};
+  for (const { base, cs } of tenants)
+    for (const r of filteredCS(base._tenantIdx, cs)) {
+      const c = String(r.charge ?? '').trim();
+      if (!c) continue;
+      if (!codeType[c]) codeType[c] = String(r.chargeType ?? '').trim();
+      if (!csSet.has(c)) { csSet.add(c); csCodes.push(c); }
+    }
+
+  // Sort CS codes by mapping category
+  const MAP_ORD = ['Rent', 'Opex', 'Utility', 'Management', 'Insurance', 'Tax', 'Excluded'];
+  csCodes.sort((a, b) => {
+    const ia = MAP_ORD.indexOf(mappings[pairKey(a, codeType[a] ?? '')] ?? '');
+    const ib = MAP_ORD.indexOf(mappings[pairKey(b, codeType[b] ?? '')] ?? '');
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+
+  const csMax: Record<string, number> = Object.fromEntries(csCodes.map(c => [c, 0]));
+  for (const { base, cs } of tenants) {
+    const cnt: Record<string, number> = {};
+    for (const r of filteredCS(base._tenantIdx, cs)) { const c = String(r.charge ?? '').trim(); if (c) cnt[c] = (cnt[c] ?? 0) + 1; }
+    for (const c of csCodes) csMax[c] = Math.max(csMax[c], cnt[c] ?? 0);
+  }
+
+  // ── Column layout ─────────────────────────────────────────────────────────
+  const rsTotal = rsCodes.reduce((s, c) => s + 2 * rsMax[c], 0);
+  const csTotal = csCodes.reduce((s, c) => s + 2 * csMax[c], 0);
+
+  const COL_RS    = nM;                         // rent steps start
+  const COL_BLANK = COL_RS + rsTotal;            // separator (only when both sections present)
+  const COL_CS    = rsTotal > 0 ? COL_BLANK + 1 : nM;
+  const TOTAL     = (csTotal > 0 ? COL_CS + csTotal : COL_RS + rsTotal);
+
+  const rsStart = (code: string): number => { let c = COL_RS;  for (const x of rsCodes) { if (x === code) return c; c += 2 * rsMax[x]; } return c; };
+  const csStart = (code: string): number => { let c = COL_CS;  for (const x of csCodes) { if (x === code) return c; c += 2 * csMax[x]; } return c; };
+
+  // ── Build 4 header rows ───────────────────────────────────────────────────
+  const mk = (): X[] => Array<X>(TOTAL).fill(null);
+  const h1 = mk(); const h2 = mk(); const h3 = mk(); const h4 = mk();
+
+  h1[0] = 'Tenant Info';
+  if (rsTotal > 0) h1[COL_RS] = 'Rent Steps';
+  if (csTotal > 0) h1[COL_CS] = 'Charge Schedules';
+
+  for (let i = 0; i < nM; i++) h4[i] = MAIN_HDRS[i];
+
+  for (const code of rsCodes) {
+    const s = rsStart(code);
+    h2[s] = code;
+    for (let p = 0; p < rsMax[code]; p++) {
+      h3[s + p * 2]     = `Rent Step ${p + 1}`;
+      h4[s + p * 2]     = `Rent Date ${p + 1}`;
+      h4[s + p * 2 + 1] = `Rent Rate ${p + 1}`;
+    }
+  }
+
+  for (const code of csCodes) {
+    const s = csStart(code);
+    const label = mappings[pairKey(code, codeType[code] ?? '')] || code;
+    h2[s] = code;
+    for (let p = 0; p < csMax[code]; p++) {
+      h3[s + p * 2]     = label;
+      h4[s + p * 2]     = `Date ${p + 1}`;
+      h4[s + p * 2 + 1] = `Rate ${p + 1}`;
+    }
+  }
+
+  // ── Build data rows (one per tenant, starting at row 5) ──────────────────
+  const rate = (r: FlatRow, base: FlatRow): number | null => {
+    const apa = toNumber(r.annualPerArea);
+    if (apa !== null) return apa;
+    const ann = toNumber(r.annual); const area = toNumber(base.area);
+    return ann !== null && area ? ann / area : null;
+  };
+
+  const dataRows: X[][] = tenants.map(({ base, rs, cs }) => {
+    const row = mk();
+    for (let i = 0; i < nM; i++) {
+      const v = base[MAIN_KEYS[i]] as Cell;
+      row[i] = v instanceof Date ? v : typeof v === 'number' ? v : (v as string | null) ?? null;
+    }
+    for (const code of rsCodes) {
+      const steps = rs.filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
+      const s = rsStart(code);
+      steps.forEach((st, p) => { row[s + p * 2] = st.from instanceof Date ? st.from : (st.from as string | null); row[s + p * 2 + 1] = rate(st, base); });
+    }
+    for (const code of csCodes) {
+      const charges = filteredCS(base._tenantIdx, cs).filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
+      const s = csStart(code);
+      charges.forEach((ch, p) => { row[s + p * 2] = ch.from instanceof Date ? ch.from : (ch.from as string | null); row[s + p * 2 + 1] = rate(ch, base); });
+    }
+    return row;
+  });
+
+  // ── Build worksheet ───────────────────────────────────────────────────────
+  const ws = XLSX.utils.aoa_to_sheet([h1, h2, h3, h4, ...dataRows], { cellDates: true });
+
+  // Merges
+  const M: XLSX.Range[] = [];
+  const mg = (r1: number, c1: number, r2: number, c2: number) => { if (r1 !== r2 || c1 !== c2) M.push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } }); };
+
+  // Row 1 section headers
+  if (nM > 1)       mg(0, 0,      0, nM - 1);
+  if (rsTotal > 1)  mg(0, COL_RS, 0, COL_RS + rsTotal - 1);
+  if (csTotal > 1)  mg(0, COL_CS, 0, COL_CS + csTotal - 1);
+
+  // Main cols: merge rows 1-3 vertically per column (so only row 4 has labels)
+  for (let i = 0; i < nM; i++) mg(0, i, 2, i);
+
+  // Row 2: charge code merges across their 2×maxP columns
+  for (const code of rsCodes) { const s = rsStart(code); const w = 2 * rsMax[code]; if (w > 1) mg(1, s, 1, s + w - 1); }
+  for (const code of csCodes) { const s = csStart(code); const w = 2 * csMax[code]; if (w > 1) mg(1, s, 1, s + w - 1); }
+
+  // Row 3: each step pair (date+rate) merged
+  for (const code of rsCodes) { const s = rsStart(code); for (let p = 0; p < rsMax[code]; p++) mg(2, s + p * 2, 2, s + p * 2 + 1); }
+  for (const code of csCodes) { const s = csStart(code); for (let p = 0; p < csMax[code]; p++) mg(2, s + p * 2, 2, s + p * 2 + 1); }
+
+  ws['!merges'] = M;
 
   // Column widths
-  const colWidths = COLS.map(col =>
-    col.right ? { wch: 14 } : col.key === 'property' ? { wch: 38 } : { wch: 18 }
-  );
-  if (catInsertAfter >= 0) colWidths.splice(catInsertAfter + 1, 0, { wch: 14 });
-  ws['!cols'] = colWidths;
+  ws['!cols'] = Array.from({ length: TOTAL }, (_, i) => {
+    if (i === 0)              return { wch: 32 };
+    if (i === COL_BLANK && rsTotal > 0 && csTotal > 0) return { wch: 2 };
+    if (i < nM)               return { wch: 14 };
+    return { wch: 13 };
+  });
 
-  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+  // Freeze: first nM columns + first 4 rows
+  ws['!freeze'] = { xSplit: nM, ySplit: 4 };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Rent Roll');
+  XLSX.writeFile(wb, fileName.replace(/\.[^.]+$/, '') + '_extracted.xlsx');
+}
 
-  const outName = fileName.replace(/\.[^.]+$/, '') + '_extracted.xlsx';
-  XLSX.writeFile(wb, outName);
+// ─── Flat (raw) export ────────────────────────────────────────────────────────
+
+function downloadFlatXLSX(rows: FlatRow[], fileName: string) {
+  const header = COLS.map(c => c.label);
+  const wsData: (string | number | Date | null)[][] = [header];
+  for (const row of rows) {
+    wsData.push(
+      COLS.map(col => {
+        const v = row[col.key];
+        if (col.key === '_isSplit') return null;
+        if (v instanceof Date) return v;
+        if (typeof v === 'number') return v;
+        return fmt(v as Cell) || null;
+      })
+    );
+  }
+  const ws = XLSX.utils.aoa_to_sheet(wsData, { cellDates: true });
+  ws['!cols'] = COLS.map(col =>
+    col.right ? { wch: 14 } : col.key === 'property' ? { wch: 38 } : { wch: 18 }
+  );
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Rent Roll');
+  XLSX.writeFile(wb, fileName.replace(/\.[^.]+$/, '') + '_flat.xlsx');
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -494,12 +688,20 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
             {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} · {rows.length} row{rows.length !== 1 ? 's' : ''}
           </span>
         </div>
-        <button
-          onClick={() => setShowMapping(true)}
-          className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
-        >
-          ↓ Download Excel
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => downloadFlatXLSX(rows, fileName)}
+            className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
+          >
+            ↓ Raw Export
+          </button>
+          <button
+            onClick={() => setShowMapping(true)}
+            className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
+          >
+            ↓ Structured Export
+          </button>
+        </div>
       </div>
 
       {/* Table */}
