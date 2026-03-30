@@ -7,7 +7,7 @@ import { colLetterToIndex, getCellValue } from './col-utils';
  * Stores raw Excel rows directly — no data transformation or loss.
  */
 export function parseSheet(
-  data: (string | number | null)[][],
+  data: (string | number | Date | null)[][],
   instruction: ParsingInstruction,
   addLog?: (type: 'system' | 'flag', msg: string) => void
 ): TenantObject[] {

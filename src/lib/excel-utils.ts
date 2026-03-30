@@ -4,7 +4,7 @@ import { COLUMN_GROUPS } from './types';
 import { colLetterToIndex, getCellValue, indexToColLetter } from './col-utils';
 
 export function readExcelFile(file: File): Promise<{
-  data: (string | number | null)[][];
+  data: (string | number | Date | null)[][];
   totalRows: number;
   fileName: string;
   fileSize: number;
@@ -20,14 +20,14 @@ export function readExcelFile(file: File): Promise<{
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
 
-        const jsonData = XLSX.utils.sheet_to_json<(string | number | null)[]>(sheet, {
+        const jsonData = XLSX.utils.sheet_to_json<(string | number | Date | null)[]>(sheet, {
           header: 1,
           defval: null,
-          raw: false,
+          raw: true,
         });
 
         resolve({
-          data: jsonData as (string | number | null)[][],
+          data: jsonData as (string | number | Date | null)[][],
           totalRows: jsonData.length,
           fileName: file.name,
           fileSize: file.size,

@@ -62,7 +62,7 @@ function looksLikeSuiteId(value: string, colHeader?: string): boolean {
  * Auto-detect which rows are headers by scanning for header-keyword density.
  * Returns indices of rows that look like headers (metadata rows + actual column headers).
  */
-export function detectHeaderRows(data: (string | number | null)[][]): number[] {
+export function detectHeaderRows(data: (string | number | Date | null)[][]): number[] {
   const headerRows: number[] = [];
   const scanLimit = Math.min(20, data.length); // Only scan first 20 rows
 
@@ -100,9 +100,9 @@ export function detectHeaderRows(data: (string | number | null)[][]): number[] {
 
 
 export function anonymizeSheet(
-  data: (string | number | null)[][],
+  data: (string | number | Date | null)[][],
   headerRowIndices: number[]
-): { anonymized: (string | number | null)[][]; mapping: AnonymizationMapping; stats: { names: number; suites: number; amounts: number } } {
+): { anonymized: (string | number | Date | null)[][]; mapping: AnonymizationMapping; stats: { names: number; suites: number; amounts: number } } {
   const mapping: AnonymizationMapping = {
     tenantNames: new Map(),
     suiteIds: new Map(),

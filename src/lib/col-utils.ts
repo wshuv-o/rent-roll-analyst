@@ -22,14 +22,14 @@ export function colLetterToIndex(letter: string): number {
 }
 
 /** Get cell value as string from a row */
-export function getCellValue(row: (string | number | null)[], colIdx: number): string {
+export function getCellValue(row: (string | number | Date | null)[], colIdx: number): string {
   if (colIdx < 0 || colIdx >= row.length) return '';
   const val = row[colIdx];
   return val !== null && val !== undefined ? String(val).trim() : '';
 }
 
 /** Get raw cell value from a row (preserving type) */
-export function getRawCellValue(row: (string | number | null)[], colIdx: number): string | number | null {
+export function getRawCellValue(row: (string | number | Date | null)[], colIdx: number): string | number | Date | null {
   if (colIdx < 0 || colIdx >= row.length) return null;
   return row[colIdx] ?? null;
 }

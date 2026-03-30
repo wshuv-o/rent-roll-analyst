@@ -40,7 +40,7 @@ function deriveGroupSpans(instruction: ParsingInstruction): GroupSpan[] {
 }
 
 /** Compute the last non-empty column across the first N rows */
-function computeEffectiveCols(data: (string | number | null)[][], maxRows: number): number {
+function computeEffectiveCols(data: (string | number | Date | null)[][], maxRows: number): number {
   let effCols = 0;
   const limit = Math.min(maxRows, data.length);
   for (let r = 0; r < limit; r++) {
@@ -65,7 +65,7 @@ export function useRentRollParser() {
   const [fileName, setFileName] = useState('');
   const [step, setStep] = useState<WorkflowStep>('upload');
 
-  const [sheetData, setSheetData] = useState<(string | number | null)[][]>([]);
+  const [sheetData, setSheetData] = useState<(string | number | Date | null)[][]>([]);
   const [headerRows, setHeaderRows] = useState<number[]>([]);
   const [instruction, setInstruction] = useState<ParsingInstruction | null>(null);
   const [groupSpans, setGroupSpans] = useState<GroupSpan[]>([]);
@@ -87,7 +87,7 @@ export function useRentRollParser() {
   // Rich tenancy-schedule result (kept separate from the downcast TenantObject[])
   const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
 
-  const sheetDataRef = useRef<(string | number | null)[][]>([]);
+  const sheetDataRef = useRef<(string | number | Date | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
 
   const addLog = useCallback((type: LogType, message: string, isStreaming = false): string => {
@@ -116,7 +116,7 @@ export function useRentRollParser() {
 
     addLog('system', `File received: ${file.name} — ${formatFileSize(file.size)} — reading sheet...`);
 
-    let data: (string | number | null)[][];
+    let data: (string | number | Date | null)[][];
     let rows: number;
 
     try {

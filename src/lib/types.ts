@@ -132,7 +132,7 @@ export interface TenantObject {
   suite_id: string;
   tenant_name: string;
   /** All raw rows belonging to this tenant, preserving original cell values and types */
-  rawRows: (string | number | null)[][];
+  rawRows: (string | number | Date | null)[][];
   notes: string;
 }
 

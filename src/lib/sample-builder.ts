@@ -4,7 +4,7 @@
  * Returns an HTML table string preserving visual structure.
  */
 export function buildSample(
-  data: (string | number | null)[][],
+  data: (string | number | Date | null)[][],
   totalRows: number,
   sampleRowCount?: number,
   sampleColCount?: number
@@ -36,7 +36,7 @@ export function buildSample(
     return letter;
   });
 
-  function rowsToHtml(rows: (string | number | null)[][], startIdx: number): string {
+  function rowsToHtml(rows: (string | number | Date | null)[][], startIdx: number): string {
     return rows.map((row, i) => {
       const rowNum = startIdx + i + 1;
       const cells = Array.from({ length: maxCols }, (_, c) => {
