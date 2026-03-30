@@ -514,17 +514,20 @@ function downloadXLSX(
   const mk = (): X[] => Array<X>(TOTAL).fill(null);
   const h1 = mk(); const h2 = mk(); const h3 = mk(); const h4 = mk();
 
-  h1[0] = 'Tenant Info';
-  if (rsTotal > 0) h1[COL_RS] = 'Rent Steps';
-  if (csTotal > 0) h1[COL_CS] = 'Charge Schedules';
-
+  // Fill every cell — no merges
+  for (let i = 0; i < nM; i++) h1[i] = 'Tenant Info';
   for (let i = 0; i < nM; i++) h4[i] = MAIN_HDRS[i];
+
+  if (rsTotal > 0) for (let i = COL_RS; i < COL_RS + rsTotal; i++) h1[i] = 'Rent Steps';
+  if (csTotal > 0) for (let i = COL_CS; i < COL_CS + csTotal; i++) h1[i] = 'Charge Schedules';
 
   for (const code of rsCodes) {
     const s = rsStart(code);
-    h2[s] = code;
     for (let p = 0; p < rsMax[code]; p++) {
+      h2[s + p * 2]     = code;
+      h2[s + p * 2 + 1] = code;
       h3[s + p * 2]     = `Rent Step ${p + 1}`;
+      h3[s + p * 2 + 1] = `Rent Step ${p + 1}`;
       h4[s + p * 2]     = `Rent Date ${p + 1}`;
       h4[s + p * 2 + 1] = `Rent Rate ${p + 1}`;
     }
@@ -533,9 +536,11 @@ function downloadXLSX(
   for (const code of csCodes) {
     const s = csStart(code);
     const label = mappings[pairKey(code, codeType[code] ?? '')] || code;
-    h2[s] = code;
     for (let p = 0; p < csMax[code]; p++) {
+      h2[s + p * 2]     = code;
+      h2[s + p * 2 + 1] = code;
       h3[s + p * 2]     = label;
+      h3[s + p * 2 + 1] = label;
       h4[s + p * 2]     = `Date ${p + 1}`;
       h4[s + p * 2 + 1] = `Rate ${p + 1}`;
     }
@@ -570,28 +575,6 @@ function downloadXLSX(
 
   // ── Build worksheet ───────────────────────────────────────────────────────
   const ws = XLSX.utils.aoa_to_sheet([h1, h2, h3, h4, ...dataRows], { cellDates: true });
-
-  // Merges
-  const M: XLSX.Range[] = [];
-  const mg = (r1: number, c1: number, r2: number, c2: number) => { if (r1 !== r2 || c1 !== c2) M.push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } }); };
-
-  // Row 1 section headers
-  if (nM > 1)       mg(0, 0,      0, nM - 1);
-  if (rsTotal > 1)  mg(0, COL_RS, 0, COL_RS + rsTotal - 1);
-  if (csTotal > 1)  mg(0, COL_CS, 0, COL_CS + csTotal - 1);
-
-  // Main cols: merge rows 1-3 vertically per column (so only row 4 has labels)
-  for (let i = 0; i < nM; i++) mg(0, i, 2, i);
-
-  // Row 2: charge code merges across their 2×maxP columns
-  for (const code of rsCodes) { const s = rsStart(code); const w = 2 * rsMax[code]; if (w > 1) mg(1, s, 1, s + w - 1); }
-  for (const code of csCodes) { const s = csStart(code); const w = 2 * csMax[code]; if (w > 1) mg(1, s, 1, s + w - 1); }
-
-  // Row 3: each step pair (date+rate) merged
-  for (const code of rsCodes) { const s = rsStart(code); for (let p = 0; p < rsMax[code]; p++) mg(2, s + p * 2, 2, s + p * 2 + 1); }
-  for (const code of csCodes) { const s = csStart(code); for (let p = 0; p < csMax[code]; p++) mg(2, s + p * 2, 2, s + p * 2 + 1); }
-
-  ws['!merges'] = M;
 
   // Column widths
   ws['!cols'] = Array.from({ length: TOTAL }, (_, i) => {
