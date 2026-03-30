@@ -68,7 +68,6 @@ function gatherAllChargeCodes(tenants: MallRentRollTenant[]): string[] {
       if (ch.billCode) codeSet.add(ch.billCode);
     }
   }
-  // Sort: known codes first (in default order), then unknown codes alphabetically
   const knownOrder = DEFAULT_CHARGE_CODE_MAPPING.map(m => m.code);
   const known = knownOrder.filter(c => codeSet.has(c));
   const unknown = Array.from(codeSet).filter(c => !knownOrder.includes(c)).sort();
@@ -172,7 +171,16 @@ function buildColumns(allCodes: string[]): { cols: ColDef[]; groups: { name: str
   cols.push(...tvCols);
   groups.push({ name: 'Totals', count: tvCols.length, color: 'bg-slate-500/10 text-slate-400' });
 
-  // 6. Rent bumps (18 pairs)
+  // 6. Rent bump summary + 18 pairs
+  const rbSumCols: ColDef[] = [
+    { key: 'rb_sum_date', label: 'Bump Date', group: 'RentBumps', getter: t => t.rentBumps[0]?.date ?? null },
+    { key: 'rb_sum_amt', label: 'Amount', group: 'RentBumps', right: true, getter: t => t.rentBumps[0]?.amount ?? null },
+    { key: 'rb_sum_uw', label: 'UW Rent', group: 'RentBumps', right: true, getter: t => {
+      const bump = t.rentBumps[0];
+      if (!bump?.amount || typeof bump.amount !== 'number') return null;
+      return bump.amount * (t.squareFootage ?? 0);
+    }},
+  ];
   const rbCols: ColDef[] = [];
   for (let i = 0; i < 18; i++) {
     rbCols.push(
@@ -180,28 +188,38 @@ function buildColumns(allCodes: string[]): { cols: ColDef[]; groups: { name: str
       { key: `rb_a${i}`, label: `Bump Rent ${i + 1}`, group: 'RentBumps', right: true, getter: t => t.rentBumps[i]?.amount ?? null },
     );
   }
-  cols.push(...rbCols);
-  groups.push({ name: 'Rent Bumps', count: rbCols.length, color: 'bg-orange-500/10 text-orange-400' });
+  cols.push(...rbSumCols, ...rbCols);
+  groups.push({ name: 'Rent Bumps', count: rbSumCols.length + rbCols.length, color: 'bg-orange-500/10 text-orange-400' });
 
   // 7. Breakpoints (current + 5 future)
   const bpLabels = ['Current', 'BP 1', 'BP 2', 'BP 3', 'BP 4', 'BP 5'];
   const bpCols: ColDef[] = [];
   for (let i = 0; i < 6; i++) {
     bpCols.push(
-      { key: `bp_d${i}`, label: `${bpLabels[i]} Date`, group: 'Breakpoints', getter: t => t.breakpoints[i]?.date ?? null },
-      { key: `bp_a${i}`, label: `${bpLabels[i]} Amount`, group: 'Breakpoints', right: true, getter: t => t.breakpoints[i]?.amount ?? null },
+      { key: `bp_d${i}`, label: `${bpLabels[i]} BP Date`, group: 'Breakpoints', getter: t => t.breakpoints[i]?.date ?? null },
+      { key: `bp_a${i}`, label: `${bpLabels[i]} Breakpoint`, group: 'Breakpoints', right: true, getter: t => t.breakpoints[i]?.amount ?? null },
       { key: `bp_p${i}`, label: `${bpLabels[i]} %`, group: 'Breakpoints', right: true, getter: t => t.breakpoints[i]?.percent ?? null },
     );
   }
   cols.push(...bpCols);
   groups.push({ name: 'Breakpoints', count: bpCols.length, color: 'bg-rose-500/10 text-rose-400' });
 
-  // 8-10. CAM/UTL/RET bumps (12 pairs each)
+  // 8-10. CAM/UTL/RET bumps with summaries (12 pairs each)
   for (const [prefix, field, label, clr] of [
     ['cam', 'camBumps', 'CAM Bumps', 'bg-teal-500/10 text-teal-400'],
     ['utl', 'utlBumps', 'UTL Bumps', 'bg-cyan-500/10 text-cyan-400'],
     ['ret', 'retBumps', 'RET Bumps', 'bg-pink-500/10 text-pink-400'],
   ] as const) {
+    const sumCols: ColDef[] = [
+      { key: `${prefix}_sum_date`, label: 'Bump Date', group: label, getter: t => (t[field] as { date: Cell; amount: Cell }[])[0]?.date ?? null },
+      { key: `${prefix}_sum_amt`, label: 'Amount', group: label, right: true, getter: t => (t[field] as { date: Cell; amount: Cell }[])[0]?.amount ?? null },
+      { key: `${prefix}_sum_chg`, label: `Changes on ${prefix.toUpperCase()}`, group: label, right: true, getter: (t, abc) => {
+        const bumps = t[field] as { date: Cell; amount: Cell }[];
+        if (!bumps[0]?.amount || typeof bumps[0].amount !== 'number') return null;
+        const currentAnnual = computeCategoryTotal(abc, prefix === 'cam' ? 'CAM' : prefix === 'utl' ? 'UTL' : 'RET');
+        return bumps[0].amount - currentAnnual;
+      }},
+    ];
     const bCols: ColDef[] = [];
     for (let i = 0; i < 12; i++) {
       bCols.push(
@@ -209,8 +227,8 @@ function buildColumns(allCodes: string[]): { cols: ColDef[]; groups: { name: str
         { key: `${prefix}_a${i}`, label: `${prefix.toUpperCase()} Bump Amt ${i + 1}`, group: label, right: true, getter: t => (t[field] as { date: Cell; amount: Cell }[])[i]?.amount ?? null },
       );
     }
-    cols.push(...bCols);
-    groups.push({ name: label, count: bCols.length, color: clr });
+    cols.push(...sumCols, ...bCols);
+    groups.push({ name: label, count: sumCols.length + bCols.length, color: clr });
   }
 
   // 11. Category
@@ -263,6 +281,11 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     _sep3: c++,
   };
 
+  // Rent bump summary (3 cols: Bump Date, Amount, UW Rent)
+  const rentSumStart = c;
+  c += 3;
+  const _sepRS = c++;
+
   // Rent bumps (18 pairs)
   const rentBumpStart = c;
   c += 36;
@@ -273,15 +296,30 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
   c += 18;
   const _sepBP = c++;
 
+  // CAM summary (3 cols: Bump Date, Amount, Changes on CAM)
+  const camSumStart = c;
+  c += 3;
+  const _sepCS = c++;
+
   // CAM bumps (12 pairs)
   const camBumpStart = c;
   c += 24;
   const _sepCAM = c++;
 
+  // UTL summary (4 cols: Bump Date, Amount, Changes on UTL, %)
+  const utlSumStart = c;
+  c += 4;
+  const _sepUS = c++;
+
   // UTL bumps (12 pairs)
   const utlBumpStart = c;
   c += 24;
   const _sepUTL = c++;
+
+  // RET summary (3 cols: Bump Date, Amount, Changes on RET)
+  const retSumStart = c;
+  c += 3;
+  const _sepRetS = c++;
 
   // RET bumps (12 pairs)
   const retBumpStart = c;
@@ -306,6 +344,9 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
   for (let i = 0; i < codeCount; i++) headers[codeStart + i] = allCodes[i];
   headers[COL2.total] = 'Total'; headers[COL2.variance] = 'Variance';
 
+  // Rent bump summary headers
+  headers[rentSumStart] = 'Bump Date'; headers[rentSumStart + 1] = 'Amount'; headers[rentSumStart + 2] = 'UW Rent';
+
   for (let i = 0; i < 18; i++) {
     headers[rentBumpStart + i * 2] = `Bump Date ${i + 1}`;
     headers[rentBumpStart + i * 2 + 1] = `Bump Rent ${i + 1}`;
@@ -316,14 +357,27 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     headers[bpStart + i * 3 + 1] = `${bpLabels[i]} Breakpoint`;
     headers[bpStart + i * 3 + 2] = `${bpLabels[i]} %`;
   }
+
+  // CAM summary headers
+  headers[camSumStart] = 'Bump Date'; headers[camSumStart + 1] = 'Amount'; headers[camSumStart + 2] = 'Changes on CAM';
+
   for (let i = 0; i < 12; i++) {
     headers[camBumpStart + i * 2] = `CAM Bump Date ${i + 1}`;
     headers[camBumpStart + i * 2 + 1] = `CAM Bump Amount ${i + 1}`;
   }
+
+  // UTL summary headers
+  headers[utlSumStart] = 'Bump Date'; headers[utlSumStart + 1] = 'Amount';
+  headers[utlSumStart + 2] = 'Changes on UTL'; headers[utlSumStart + 3] = '%';
+
   for (let i = 0; i < 12; i++) {
     headers[utlBumpStart + i * 2] = `UTL Bump Date ${i + 1}`;
     headers[utlBumpStart + i * 2 + 1] = `UTL Bump Amount ${i + 1}`;
   }
+
+  // RET summary headers
+  headers[retSumStart] = 'Bump Date'; headers[retSumStart + 1] = 'Amount'; headers[retSumStart + 2] = 'Changes on RET';
+
   for (let i = 0; i < 12; i++) {
     headers[retBumpStart + i * 2] = `RET Bump Date ${i + 1}`;
     headers[retBumpStart + i * 2 + 1] = `RET Bump Amount ${i + 1}`;
@@ -334,7 +388,7 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     if (headers[ci]) ws[XLSX.utils.encode_cell({ r: 0, c: ci })] = { v: headers[ci], t: 's' };
   }
 
-  // Mapping range for SUMPRODUCT: DRAFT!$C$2:$C${1+codeCount}
+  // Mapping range for SUMPRODUCT
   const mappingCatRange = `DRAFT!$C$2:$C$${1 + codeCount}`;
   const codeStartRefFn = (row: number) => colToRef(codeStart, row);
   const codeEndRefFn = (row: number) => colToRef(codeStart + codeCount - 1, row);
@@ -357,6 +411,7 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     writeCell(COL.dba, t.dba);
     writeCell(COL.leaseId, t.leaseId);
     writeCell(COL.sf, t.squareFootage);
+    writeCell(COL.modifiedSf, t.squareFootage); // Modified SF = SF
     writeCell(COL.leaseType, t.leaseType);
     writeCell(COL.spaceType, t.category);
     writeCell(COL.spaceTypeInput, t.category);
@@ -395,18 +450,27 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
     if (codeCount > 0) {
       ws[XLSX.utils.encode_cell({ r, c: COL2.total })] = { f: `SUM(${codeStartRefFn(excelRow)}:${codeEndRefFn(excelRow)})`, t: 'n' };
     }
-    // Variance = Total - (Rent + CAM + RET + UTL + Relief + Excluded) — should be 0
+    // Variance
     ws[XLSX.utils.encode_cell({ r, c: COL2.variance })] = {
       f: `${colToRef(COL2.total, excelRow)}-${colToRef(COL.annRent, excelRow)}-${colToRef(COL.annCAM, excelRow)}-${colToRef(COL.annRET, excelRow)}-${colToRef(COL.annUTL, excelRow)}-${colToRef(COL.annRelief, excelRow)}-${colToRef(COL.annExcluded, excelRow)}`,
       t: 'n'
     };
 
-    // Rent bumps (18 pairs)
-    for (let i = 0; i < 18; i++) {
-      if (t.rentBumps[i]) {
-        writeCell(rentBumpStart + i * 2, t.rentBumps[i].date);
-        writeCell(rentBumpStart + i * 2 + 1, t.rentBumps[i].amount);
+    // Rent bump summary
+    if (t.rentBumps.length > 0 && t.rentBumps[0]?.date) {
+      writeCell(rentSumStart, t.rentBumps[0].date);
+      writeCell(rentSumStart + 1, t.rentBumps[0].amount);
+      // UW Rent = rate/SF * SF
+      const rate = typeof t.rentBumps[0].amount === 'number' ? t.rentBumps[0].amount : null;
+      if (rate !== null && t.squareFootage) {
+        writeCell(rentSumStart + 2, rate * t.squareFootage);
       }
+    }
+
+    // Rent bumps (18 pairs)
+    for (let i = 0; i < 18 && i < t.rentBumps.length; i++) {
+      writeCell(rentBumpStart + i * 2, t.rentBumps[i].date);
+      writeCell(rentBumpStart + i * 2 + 1, t.rentBumps[i].amount);
     }
 
     // Breakpoints (6 entries)
@@ -416,11 +480,56 @@ function downloadFinalRR(tenants: MallRentRollTenant[], fileName: string) {
       writeCell(bpStart + i * 3 + 2, t.breakpoints[i].percent);
     }
 
-    // CAM/UTL/RET bumps (12 pairs each)
-    for (let i = 0; i < 12; i++) {
-      if (t.camBumps[i]) { writeCell(camBumpStart + i * 2, t.camBumps[i].date); writeCell(camBumpStart + i * 2 + 1, t.camBumps[i].amount); }
-      if (t.utlBumps[i]) { writeCell(utlBumpStart + i * 2, t.utlBumps[i].date); writeCell(utlBumpStart + i * 2 + 1, t.utlBumps[i].amount); }
-      if (t.retBumps[i]) { writeCell(retBumpStart + i * 2, t.retBumps[i].date); writeCell(retBumpStart + i * 2 + 1, t.retBumps[i].amount); }
+    // CAM summary
+    if (t.camBumps.length > 0 && t.camBumps[0]?.date) {
+      writeCell(camSumStart, t.camBumps[0].date);
+      const camAnnual = typeof t.camBumps[0].amount === 'number' ? t.camBumps[0].amount : null;
+      writeCell(camSumStart + 1, camAnnual);
+      if (camAnnual !== null) {
+        const currentCam = computeCategoryTotal(annualByCode, 'CAM');
+        writeCell(camSumStart + 2, camAnnual - currentCam);
+      }
+    }
+
+    // CAM bumps (12 pairs)
+    for (let i = 0; i < 12 && i < t.camBumps.length; i++) {
+      writeCell(camBumpStart + i * 2, t.camBumps[i].date);
+      writeCell(camBumpStart + i * 2 + 1, t.camBumps[i].amount);
+    }
+
+    // UTL summary
+    if (t.utlBumps.length > 0 && t.utlBumps[0]?.date) {
+      writeCell(utlSumStart, t.utlBumps[0].date);
+      const utlAnnual = typeof t.utlBumps[0].amount === 'number' ? t.utlBumps[0].amount : null;
+      writeCell(utlSumStart + 1, utlAnnual);
+      if (utlAnnual !== null) {
+        const currentUtl = computeCategoryTotal(annualByCode, 'UTL');
+        writeCell(utlSumStart + 2, utlAnnual - currentUtl);
+      }
+      writeCell(utlSumStart + 3, t.utlBumps[0].percent ?? null);
+    }
+
+    // UTL bumps (12 pairs)
+    for (let i = 0; i < 12 && i < t.utlBumps.length; i++) {
+      writeCell(utlBumpStart + i * 2, t.utlBumps[i].date);
+      writeCell(utlBumpStart + i * 2 + 1, t.utlBumps[i].amount);
+    }
+
+    // RET summary
+    if (t.retBumps.length > 0 && t.retBumps[0]?.date) {
+      writeCell(retSumStart, t.retBumps[0].date);
+      const retAnnual = typeof t.retBumps[0].amount === 'number' ? t.retBumps[0].amount : null;
+      writeCell(retSumStart + 1, retAnnual);
+      if (retAnnual !== null) {
+        const currentRet = computeCategoryTotal(annualByCode, 'RET');
+        writeCell(retSumStart + 2, retAnnual - currentRet);
+      }
+    }
+
+    // RET bumps (12 pairs)
+    for (let i = 0; i < 12 && i < t.retBumps.length; i++) {
+      writeCell(retBumpStart + i * 2, t.retBumps[i].date);
+      writeCell(retBumpStart + i * 2 + 1, t.retBumps[i].amount);
     }
   }
 
