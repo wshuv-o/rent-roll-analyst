@@ -26,7 +26,7 @@ interface TenantTableProps {
 }
 
 function formatSpanValues(
-  rows: (string | number | null)[][],
+  rows: (string | number | Date | null)[][],
   span: GroupSpan,
   columnLabels: Record<number, string>,
   collection: boolean
