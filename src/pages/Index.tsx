@@ -10,6 +10,7 @@ import { RentRollTypeConfirmStep } from '@/components/RentRollTypeConfirmStep';
 import { useRentRollParser } from '@/hooks/useRentRollParser';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { TenancyScheduleTable } from '@/components/TenancySchedule';
+import { MallRentRollTable } from '@/components/MallRentRoll';
 
 const Index = () => {
   const {
@@ -18,7 +19,7 @@ const Index = () => {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
-    selectedRentRollType, tenancyScheduleTenants,
+    selectedRentRollType, tenancyScheduleTenants, mallRentRollTenants,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
@@ -29,6 +30,7 @@ const Index = () => {
   const [showSentData, setShowSentData] = useState(false);
 
   const isTenancySchedule = selectedRentRollType === 'tenancy-schedule';
+  const isMallRentRoll = selectedRentRollType === 'mall-rent-roll';
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -156,8 +158,19 @@ const Index = () => {
             </div>
           )}
 
+          {/* ── Done: mall rent roll → flat table ── */}
+          {step === 'done' && isMallRentRoll && mallRentRollTenants.length > 0 && (
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              <MallRentRollTable
+                tenants={mallRentRollTenants}
+                fileName={fileName}
+                onBack={goBackToConfirm}
+              />
+            </div>
+          )}
+
           {/* ── Done: regular rent roll → existing TenantTable ── */}
-          {step === 'done' && !isTenancySchedule && tenants.length > 0 && (
+          {step === 'done' && !isTenancySchedule && !isMallRentRoll && tenants.length > 0 && (
             <div className="flex-1 overflow-y-auto p-4">
               <TenantTable
                 tenants={tenants}
@@ -171,7 +184,7 @@ const Index = () => {
             </div>
           )}
 
-          {step === 'done' && tenants.length === 0 && tenancyScheduleTenants.length === 0 && (
+          {step === 'done' && tenants.length === 0 && tenancyScheduleTenants.length === 0 && mallRentRollTenants.length === 0 && (
             <div className="flex-1 flex items-center justify-center">
               <span className="text-sm font-mono text-log-flag">
                 0 tenants found. Try adjusting column assignments.

@@ -27,4 +27,10 @@ export const RENT_ROLL_TYPES: RentRollType[] = [
     description: 'Hierarchical blocks with "Rent Steps" / "Charge Schedules" sub-sections and repeated sub-headers per tenant.',
     implemented: true,
   },
+  {
+    id: 'mall-rent-roll',
+    label: 'Mall Rent Roll',
+    description: 'JDE EnterpriseOne mall format — multi-row tenant blocks with charge codes and future escalations.',
+    implemented: true,
+  },
 ];

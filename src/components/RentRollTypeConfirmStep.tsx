@@ -39,9 +39,40 @@ const IllustrationTenancySchedule = () => (
   </svg>
 );
 
+const IllustrationMallRentRoll = () => (
+  <svg viewBox="0 0 160 100" className="w-full h-full" aria-hidden>
+    {/* Header row */}
+    <rect x="4" y="4" width="152" height="8" rx="1" fill="currentColor" opacity="0.5" />
+    {/* Tenant main row */}
+    <rect x="4" y="16" width="30" height="7" rx="1" fill="#10b981" opacity="0.7" />
+    <rect x="38" y="16" width="50" height="7" rx="1" fill="currentColor" opacity="0.55" />
+    <rect x="92" y="16" width="64" height="7" rx="1" fill="currentColor" opacity="0.35" />
+    {/* Charge sub-rows */}
+    {[0, 1].map(i => (
+      <g key={i} transform={`translate(0, ${27 + i * 9})`}>
+        <rect x="20" y="0" width="22" height="6" rx="1" fill="#10b981" opacity="0.45" />
+        <rect x="46" y="0" width="40" height="6" rx="1" fill="currentColor" opacity="0.25" />
+        <rect x="90" y="0" width="30" height="6" rx="1" fill="currentColor" opacity="0.20" />
+      </g>
+    ))}
+    {/* Metadata rows */}
+    <rect x="20" y="47" width="60" height="5" rx="1" fill="currentColor" opacity="0.15" />
+    <rect x="20" y="54" width="60" height="5" rx="1" fill="currentColor" opacity="0.15" />
+    {/* Total row */}
+    <rect x="50" y="63" width="36" height="6" rx="1" fill="#10b981" opacity="0.5" />
+    {/* Second tenant */}
+    <rect x="4" y="75" width="30" height="7" rx="1" fill="#10b981" opacity="0.7" />
+    <rect x="38" y="75" width="50" height="7" rx="1" fill="currentColor" opacity="0.55" />
+    <rect x="92" y="75" width="64" height="7" rx="1" fill="currentColor" opacity="0.35" />
+    <rect x="20" y="86" width="22" height="6" rx="1" fill="#10b981" opacity="0.45" />
+    <rect x="46" y="86" width="40" height="6" rx="1" fill="currentColor" opacity="0.25" />
+  </svg>
+);
+
 const ILLUSTRATIONS: Record<string, React.ReactNode> = {
   'regular': <IllustrationRegular />,
   'tenancy-schedule': <IllustrationTenancySchedule />,
+  'mall-rent-roll': <IllustrationMallRentRoll />,
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -63,7 +94,7 @@ export function RentRollTypeConfirmStep({ fileName, onProceed }: Props) {
         </h2>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 w-full max-w-lg">
+      <div className="grid grid-cols-3 gap-4 w-full max-w-2xl">
         {RENT_ROLL_TYPES.map((type) => {
           const isSelected = selected === type.id;
           const disabled = !type.implemented;

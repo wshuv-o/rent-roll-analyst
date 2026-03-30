@@ -4,7 +4,15 @@
       "Bash(npx tsc:*)",
       "Bash(rm -f \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/features.ts\" \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/registry.ts\")",
       "Bash(rm -rf \"c:/Users/Shuvo/rent-roll-analyst/src/lib/rent-roll-types/types\")",
-      "Bash(node test-tenancy.mjs)"
+      "Bash(node test-tenancy.mjs)",
+      "Bash(where python:*)",
+      "Bash('C:\\\\Users\\\\UseR\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\python.exe' -c \"import openpyxl; print\\(''openpyxl available''\\)\")",
+      "Bash(node -e \":*)",
+      "Bash(npx vite:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(netstat -ano)",
+      "Bash(taskkill //PID 36932 //F)",
+      "Bash(node --loader ts-node/esm -e \":*)"
     ]
   }
 }
