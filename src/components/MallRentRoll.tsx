@@ -75,20 +75,6 @@ function gatherAllChargeCodes(tenants: MallRentRollTenant[]): string[] {
   return [...known, ...unknown];
 }
 
-// ─── Build mapping data (code → description → category) ────────────────────
-
-function buildMappingData(codes: string[]): { code: string; description: string; category: string; reliefSubType: string }[] {
-  const knownMap = new Map(DEFAULT_CHARGE_CODE_MAPPING.map(m => [m.code, m]));
-  return codes.map(code => {
-    const known = knownMap.get(code);
-    return {
-      code,
-      description: known?.description ?? code,
-      category: known?.category ?? '',
-      reliefSubType: known?.reliefSubType ?? '',
-    };
-  });
-}
 
 // ─── Compute category totals from charges ───────────────────────────────────
 
