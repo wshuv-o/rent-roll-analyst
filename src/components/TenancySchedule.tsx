@@ -555,21 +555,37 @@ async function downloadXLSX(
     return ann !== null && area ? ann / area : null;
   };
 
+  // Format Date objects as mm/dd/yyyy strings to avoid UTC conversion by ExcelJS
+  const fmtDate = (v: Cell): string | null => {
+    if (v instanceof Date) {
+      const m = v.getMonth() + 1;
+      const d = v.getDate();
+      const y = v.getFullYear();
+      return `${m}/${d}/${y}`;
+    }
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    return null;
+  };
+
   const dataRows: X[][] = tenants.map(({ base, rs, cs }) => {
     const row = mk();
     for (let i = 0; i < nM; i++) {
       const v = base[MAIN_KEYS[i]] as Cell;
-      row[i] = v instanceof Date ? v : typeof v === 'number' ? v : (v as string | null) ?? null;
+      if (dateMainCols.has(i)) {
+        row[i] = fmtDate(v);
+      } else {
+        row[i] = v instanceof Date ? fmtDate(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
+      }
     }
     for (const code of rsCodes) {
       const steps = rs.filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
       const s = rsStart(code);
-      steps.forEach((st, p) => { row[s + p * 2] = st.from instanceof Date ? st.from : (st.from as string | null); row[s + p * 2 + 1] = rate(st, base); });
+      steps.forEach((st, p) => { row[s + p * 2] = fmtDate(st.from); row[s + p * 2 + 1] = rate(st, base); });
     }
     for (const code of csCodes) {
       const charges = filteredCS(base._tenantIdx, cs).filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
       const s = csStart(code);
-      charges.forEach((ch, p) => { row[s + p * 2] = ch.from instanceof Date ? ch.from : (ch.from as string | null); row[s + p * 2 + 1] = rate(ch, base); });
+      charges.forEach((ch, p) => { row[s + p * 2] = fmtDate(ch.from); row[s + p * 2 + 1] = rate(ch, base); });
     }
     return row;
   });
