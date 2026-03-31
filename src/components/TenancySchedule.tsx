@@ -675,12 +675,7 @@ async function downloadXLSX(
     });
   });
 
-  // ── Add data rows ─────────────────────────────────────────────────────────
-  const DATE_FMT = 'dd-mmm-yyyy';
-  // leaseFrom / leaseTo column indices
-  const dateMainCols = new Set(
-    (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
-  );
+  const DATE_FMT = 'mm/dd/yyyy';
 
   dataRows.forEach((dataRow, ri) => {
     const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
