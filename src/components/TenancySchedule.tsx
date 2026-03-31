@@ -51,29 +51,32 @@ interface FlatRow {
 type SubValues = Record<string, Cell>;
 
 const DATE_COL_KEYS = new Set<keyof FlatRow>(['leaseFrom', 'leaseTo', 'from', 'to']);
+const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+function serialToDateString(serial: number): string | null {
+  if (!Number.isFinite(serial)) return null;
+  const p = XLSX.SSF.parse_date_code(Math.round(serial));
+  if (!p || !p.y || !p.m || !p.d) return null;
+  return `${pad2(p.m)}/${pad2(p.d)}/${p.y}`;
 }
 
 function toDateString(v: Cell): string | null {
   if (v === null || v === undefined) return null;
 
   if (v instanceof Date) {
-    // Keep calendar day exactly as represented in the source workbook.
-    // Never use UTC getters here (they can shift dates by one day).
-    const y = v.getFullYear();
-    const m = v.getMonth() + 1;
-    const d = v.getDate();
-    return `${pad2(m)}/${pad2(d)}/${y}`;
+    // Convert Date -> Excel serial day and round to nearest day.
+    // This strips timezone/time artifacts and keeps the original worksheet day.
+    const serial = (v.getTime() - EXCEL_EPOCH_UTC) / 86400000;
+    const fromSerial = serialToDateString(serial);
+    if (fromSerial) return fromSerial;
   }
 
   if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
-    // Parse Excel serial directly to date parts (timezone-free).
-    const p = XLSX.SSF.parse_date_code(v);
-    if (p && p.y && p.m && p.d) {
-      return `${pad2(p.m)}/${pad2(p.d)}/${p.y}`;
-    }
+    return serialToDateString(v);
   }
 
   if (typeof v !== 'string') return null;
@@ -105,7 +108,7 @@ function toDateString(v: Cell): string | null {
 }
 
 function dateSortValue(v: Cell): number {
-  if (typeof v === 'number') return v;
+  if (typeof v === 'number') return Math.round(v);
   const d = toDateString(v);
   if (!d) return 0;
   const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
