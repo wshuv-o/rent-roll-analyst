@@ -1,51 +1,36 @@
 // Semi Final Download — single sheet, values only, one line per tenant
-// Groups: Identity, Current Charges, Future Rent & Expense Escalations, Overage/% In Lieu
-import * as XLSX from 'xlsx';
+// Uses ExcelJS for proper header styling with group colors
+import ExcelJS from 'exceljs';
 import type { MallRentRollTenant } from './rent-roll-types/mall-rent-roll-parser';
 
 type Cell = string | number | Date | null;
 
 const GROUP_COLORS: Record<string, string> = {
-  identity: 'FF1B2A4A',
-  charges: 'FF2D5F2D',
-  future: 'FF5C3D1A',
-  overage: 'FF4A2D6A',
-  legal: 'FF1A4A4A',
+  identity: '1B2A4A',
+  charges: '2D5F2D',
+  total: '4A4A4A',
+  future: '8B4513',
+  overage: '4A2D6A',
 };
 
-function headerStyle(bg: string): Record<string, unknown> {
-  return {
-    font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 10 },
-    fill: { fgColor: { rgb: bg }, patternType: 'solid' },
-    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-    border: {
-      top: { style: 'thin', color: { rgb: 'FF30363D' } },
-      bottom: { style: 'thin', color: { rgb: 'FF30363D' } },
-      left: { style: 'thin', color: { rgb: 'FF30363D' } },
-      right: { style: 'thin', color: { rgb: 'FF30363D' } },
-    },
-  };
-}
+const FONT_HDR: Partial<ExcelJS.Font> = { bold: true, color: { argb: 'FFFFFFFF' }, size: 8, name: 'Arial' };
+const FONT_BANNER: Partial<ExcelJS.Font> = { bold: true, color: { argb: 'FFFFFFFF' }, size: 9, name: 'Arial' };
+const FONT_DATA: Partial<ExcelJS.Font> = { size: 8, name: 'Arial' };
+const BORDER: Partial<ExcelJS.Borders> = {
+  top: { style: 'thin', color: { argb: 'FF888888' } },
+  bottom: { style: 'thin', color: { argb: 'FF888888' } },
+  left: { style: 'thin', color: { argb: 'FF888888' } },
+  right: { style: 'thin', color: { argb: 'FF888888' } },
+};
 
-function groupBannerStyle(bg: string): Record<string, unknown> {
-  return {
-    font: { bold: true, color: { rgb: 'FFFFFFFF' }, sz: 11 },
-    fill: { fgColor: { rgb: bg }, patternType: 'solid' },
-    alignment: { horizontal: 'center', vertical: 'center' },
-    border: {
-      top: { style: 'thin', color: { rgb: 'FF30363D' } },
-      bottom: { style: 'thin', color: { rgb: 'FF30363D' } },
-      left: { style: 'thin', color: { rgb: 'FF30363D' } },
-      right: { style: 'thin', color: { rgb: 'FF30363D' } },
-    },
-  };
+function fillBg(hex: string): ExcelJS.Fill {
+  return { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } };
 }
 
 function fmtCell(v: Cell): string | number {
   if (v === null || v === undefined) return '';
   if (v instanceof Date) return v.toLocaleDateString('en-US');
   if (typeof v === 'number') {
-    // Excel serial date
     if (v > 20000 && v < 60000) {
       const d = new Date(1899, 11, 30);
       d.setDate(d.getDate() + v);
@@ -56,8 +41,7 @@ function fmtCell(v: Cell): string | number {
   return String(v).trim();
 }
 
-export function downloadSemiFinalRR(tenants: MallRentRollTenant[], fileName: string): void {
-  // Determine max repeats for each section
+export async function downloadSemiFinalRR(tenants: MallRentRollTenant[], fileName: string): Promise<void> {
   let maxCharges = 0, maxFuture = 0, maxOverage = 0;
   for (const t of tenants) {
     maxCharges = Math.max(maxCharges, t.charges.length);
@@ -68,144 +52,120 @@ export function downloadSemiFinalRR(tenants: MallRentRollTenant[], fileName: str
   if (maxFuture === 0) maxFuture = 1;
   if (maxOverage === 0) maxOverage = 1;
 
-  // Identity columns
   const identityHeaders = [
     'Unit', 'DBA', 'Lease ID', 'Square Footage', 'Lease Type',
     'Unit Type', 'Lease Status', '% In Lieu', 'Space Type',
     'Commencement Date', 'Open Date', 'Original End Date', 'Expire/Close Date',
   ];
   const IDENTITY_COUNT = identityHeaders.length;
-
-  // Per-charge columns
   const chargeFields = ['Bill Code', 'Expense Description', 'Begin Date', 'End Date', 'Monthly Amount', 'Annual Rate/SF'];
   const CHARGE_SET = chargeFields.length;
   const chargeColCount = maxCharges * CHARGE_SET;
-
-  // Total column between charges and future
-  const TOTAL_COUNT = 1; // "Total"
-
-  // Per-future columns
+  const TOTAL_COUNT = 1;
   const futureFields = ['Bill Code', 'Expense Description', 'Begin Date', 'End Date', 'Monthly Amount', 'Annual Rate/SF', '% Inc.'];
   const FUTURE_SET = futureFields.length;
   const futureColCount = maxFuture * FUTURE_SET;
-
-  // Per-overage columns
   const overageFields = ['Bill Code', 'Begin Date', 'End Date', 'Breakpoint', 'Overage %'];
   const OVERAGE_SET = overageFields.length;
   const overageColCount = maxOverage * OVERAGE_SET;
 
-  const totalCols = IDENTITY_COUNT + chargeColCount + TOTAL_COUNT + futureColCount + overageColCount;
-
-  // Section boundaries
-  const chargeStart = IDENTITY_COUNT;
+  // Section boundaries (1-indexed for ExcelJS)
+  const chargeStart = IDENTITY_COUNT + 1;
   const totalStart = chargeStart + chargeColCount;
   const futureStart = totalStart + TOTAL_COUNT;
   const overageStart = futureStart + futureColCount;
+  const totalCols = IDENTITY_COUNT + chargeColCount + TOTAL_COUNT + futureColCount + overageColCount;
 
-  const ws: XLSX.WorkSheet = {};
-  const merges: XLSX.Range[] = [];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Semi Final');
 
-  // ── Row 0: Group banners ──
+  // ── Row 1: Group banners ──
   const writeBanner = (startCol: number, count: number, label: string, color: string) => {
-    ws[XLSX.utils.encode_cell({ r: 0, c: startCol })] = { v: label, s: groupBannerStyle(color) };
-    for (let c = startCol + 1; c < startCol + count; c++) {
-      ws[XLSX.utils.encode_cell({ r: 0, c })] = { v: '', s: groupBannerStyle(color) };
+    if (count > 1) ws.mergeCells(1, startCol, 1, startCol + count - 1);
+    const cell = ws.getRow(1).getCell(startCol);
+    cell.value = label;
+    cell.font = FONT_BANNER;
+    cell.fill = fillBg(color);
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.border = BORDER;
+    for (let cc = startCol + 1; cc < startCol + count; cc++) {
+      const c = ws.getRow(1).getCell(cc);
+      c.fill = fillBg(color);
+      c.border = BORDER;
     }
-    if (count > 1) merges.push({ s: { r: 0, c: startCol }, e: { r: 0, c: startCol + count - 1 } });
   };
 
-  writeBanner(0, IDENTITY_COUNT, '', GROUP_COLORS.identity); // Identity has no banner text, merged with header
-  writeBanner(chargeStart, chargeColCount + TOTAL_COUNT, 'Current Charges', GROUP_COLORS.charges);
+  writeBanner(1, IDENTITY_COUNT, 'Identity', GROUP_COLORS.identity);
+  writeBanner(chargeStart, chargeColCount, 'Current Charges', GROUP_COLORS.charges);
+  writeBanner(totalStart, TOTAL_COUNT, '', GROUP_COLORS.total);
   writeBanner(futureStart, futureColCount, 'Future Rent & Expense Escalations', GROUP_COLORS.future);
   writeBanner(overageStart, overageColCount, 'Overage/% In Lieu Rent Terms', GROUP_COLORS.overage);
+  ws.getRow(1).height = 20;
 
-  // ── Row 1: Column headers ──
-  // Identity
-  for (let i = 0; i < IDENTITY_COUNT; i++) {
-    ws[XLSX.utils.encode_cell({ r: 1, c: i })] = { v: identityHeaders[i], s: headerStyle(GROUP_COLORS.identity) };
-  }
-  // Current charges (repeated per charge set)
-  for (let s = 0; s < maxCharges; s++) {
-    for (let f = 0; f < CHARGE_SET; f++) {
-      ws[XLSX.utils.encode_cell({ r: 1, c: chargeStart + s * CHARGE_SET + f })] = {
-        v: chargeFields[f], s: headerStyle(GROUP_COLORS.charges),
-      };
-    }
-  }
-  // Total
-  ws[XLSX.utils.encode_cell({ r: 1, c: totalStart })] = { v: 'Total', s: headerStyle(GROUP_COLORS.charges) };
-  // Future (repeated)
-  for (let s = 0; s < maxFuture; s++) {
-    for (let f = 0; f < FUTURE_SET; f++) {
-      ws[XLSX.utils.encode_cell({ r: 1, c: futureStart + s * FUTURE_SET + f })] = {
-        v: futureFields[f], s: headerStyle(GROUP_COLORS.future),
-      };
-    }
-  }
-  // Overage (repeated)
-  for (let s = 0; s < maxOverage; s++) {
-    for (let f = 0; f < OVERAGE_SET; f++) {
-      ws[XLSX.utils.encode_cell({ r: 1, c: overageStart + s * OVERAGE_SET + f })] = {
-        v: overageFields[f], s: headerStyle(GROUP_COLORS.overage),
-      };
-    }
-  }
+  // ── Row 2: Column headers ──
+  const setH = (col: number, label: string, color: string) => {
+    const cell = ws.getRow(2).getCell(col);
+    cell.value = label;
+    cell.font = FONT_HDR;
+    cell.fill = fillBg(color);
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    cell.border = BORDER;
+  };
+
+  for (let i = 0; i < IDENTITY_COUNT; i++) setH(i + 1, identityHeaders[i], GROUP_COLORS.identity);
+  for (let s = 0; s < maxCharges; s++)
+    for (let f = 0; f < CHARGE_SET; f++)
+      setH(chargeStart + s * CHARGE_SET + f, chargeFields[f], GROUP_COLORS.charges);
+  setH(totalStart, 'Total', GROUP_COLORS.total);
+  for (let s = 0; s < maxFuture; s++)
+    for (let f = 0; f < FUTURE_SET; f++)
+      setH(futureStart + s * FUTURE_SET + f, futureFields[f], GROUP_COLORS.future);
+  for (let s = 0; s < maxOverage; s++)
+    for (let f = 0; f < OVERAGE_SET; f++)
+      setH(overageStart + s * OVERAGE_SET + f, overageFields[f], GROUP_COLORS.overage);
+  ws.getRow(2).height = 28;
 
   // ── Data rows ──
   for (let ti = 0; ti < tenants.length; ti++) {
     const t = tenants[ti];
-    const r = ti + 2;
+    const r = ti + 3;
+    const row = ws.getRow(r);
 
-    const write = (c: number, v: Cell) => {
+    const write = (col: number, v: Cell) => {
       const fv = fmtCell(v);
       if (fv === '' || fv === null || fv === undefined) return;
-      if (typeof fv === 'number') {
-        ws[XLSX.utils.encode_cell({ r, c })] = { v: fv, t: 'n' };
-      } else {
-        ws[XLSX.utils.encode_cell({ r, c })] = { v: fv, t: 's' };
-      }
+      const cell = row.getCell(col);
+      cell.value = typeof fv === 'number' ? fv : fv;
+      cell.font = FONT_DATA;
+      cell.border = BORDER;
     };
 
-    // Identity
-    write(0, t.unit);
-    write(1, t.dba);
-    write(2, t.leaseId);
-    write(3, t.squareFootage);
-    write(4, t.leaseType);
-    write(5, t.unitType);
-    write(6, t.leaseStatus);
-    write(7, t.percentInLieu);
-    write(8, t.category);
-    write(9, t.commencementDate);
-    write(10, t.openDate);
-    write(11, t.originalEndDate);
-    write(12, t.expireCloseDate);
+    // Identity (1-indexed)
+    write(1, t.unit); write(2, t.dba); write(3, t.leaseId);
+    write(4, t.squareFootage); write(5, t.leaseType);
+    write(6, t.unitType); write(7, t.leaseStatus);
+    write(8, t.percentInLieu); write(9, t.category);
+    write(10, t.commencementDate); write(11, t.openDate);
+    write(12, t.originalEndDate); write(13, t.expireCloseDate);
 
     // Current charges
     for (let ci = 0; ci < t.charges.length; ci++) {
       const ch = t.charges[ci];
       const base = chargeStart + ci * CHARGE_SET;
-      write(base, ch.billCode);
-      write(base + 1, ch.expenseDescription);
-      write(base + 2, ch.beginDate);
-      write(base + 3, ch.endDate);
-      write(base + 4, ch.monthlyAmount);
-      write(base + 5, ch.annualRateSF);
+      write(base, ch.billCode); write(base + 1, ch.expenseDescription);
+      write(base + 2, ch.beginDate); write(base + 3, ch.endDate);
+      write(base + 4, ch.monthlyAmount); write(base + 5, ch.annualRateSF);
     }
 
-    // Total
     write(totalStart, t.totalMonthlyAmount);
 
     // Future escalations
     for (let fi = 0; fi < t.futureEscalations.length; fi++) {
       const fe = t.futureEscalations[fi];
       const base = futureStart + fi * FUTURE_SET;
-      write(base, fe.billCode);
-      write(base + 1, fe.expenseDescription);
-      write(base + 2, fe.beginDate);
-      write(base + 3, fe.endDate);
-      write(base + 4, fe.monthlyAmount);
-      write(base + 5, fe.annualRateSF);
+      write(base, fe.billCode); write(base + 1, fe.expenseDescription);
+      write(base + 2, fe.beginDate); write(base + 3, fe.endDate);
+      write(base + 4, fe.monthlyAmount); write(base + 5, fe.annualRateSF);
       write(base + 6, fe.percentInc);
     }
 
@@ -213,30 +173,29 @@ export function downloadSemiFinalRR(tenants: MallRentRollTenant[], fileName: str
     for (let oi = 0; oi < t.overageEntries.length; oi++) {
       const oe = t.overageEntries[oi];
       const base = overageStart + oi * OVERAGE_SET;
-      write(base, oe.billCode);
-      write(base + 1, oe.beginDate);
-      write(base + 2, oe.endDate);
-      write(base + 3, oe.breakpoint);
+      write(base, oe.billCode); write(base + 1, oe.beginDate);
+      write(base + 2, oe.endDate); write(base + 3, oe.breakpoint);
       write(base + 4, oe.percent);
     }
   }
 
-  // Set range & merges
-  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: tenants.length + 1, c: totalCols - 1 } });
-  ws['!merges'] = merges;
-
   // Column widths
-  const colWidths: XLSX.ColInfo[] = [];
-  for (let c = 0; c < totalCols; c++) {
-    if (c === 1) colWidths.push({ wch: 28 }); // DBA
-    else if (c <= 2) colWidths.push({ wch: 14 });
-    else colWidths.push({ wch: 14 });
+  for (let cc = 1; cc <= totalCols; cc++) {
+    const col = ws.getColumn(cc);
+    if (cc === 2) col.width = 24; // DBA
+    else col.width = 13;
   }
-  ws['!cols'] = colWidths;
 
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Semi Final');
+  // Freeze panes
+  ws.views = [{ state: 'frozen', xSplit: 3, ySplit: 2 }];
 
-  const outName = fileName.replace(/\.[^.]+$/, '') + '_SemiFinal.xlsx';
-  XLSX.writeFile(wb, outName);
+  // Write and download
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName.replace(/\.[^.]+$/, '') + '_SemiFinal.xlsx';
+  a.click();
+  URL.revokeObjectURL(url);
 }
