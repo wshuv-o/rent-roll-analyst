@@ -50,13 +50,82 @@ interface FlatRow {
 
 type SubValues = Record<string, Cell>;
 
+const DATE_COL_KEYS = new Set<keyof FlatRow>(['leaseFrom', 'leaseTo', 'from', 'to']);
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function toDateString(v: Cell): string | null {
+  if (v === null || v === undefined) return null;
+
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = v.getUTCMonth() + 1;
+    const d = v.getUTCDate();
+    return `${pad2(m)}/${pad2(d)}/${y}`;
+  }
+
+  if (typeof v === 'number' && v > 20000 && v < 90000) {
+    const ms = Math.round((v - 25569) * 86400 * 1000);
+    const dt = new Date(ms);
+    if (!isNaN(dt.getTime())) {
+      return `${pad2(dt.getUTCMonth() + 1)}/${pad2(dt.getUTCDate())}/${dt.getUTCFullYear()}`;
+    }
+  }
+
+  if (typeof v !== 'string') return null;
+  const s = v.trim();
+  if (!s) return null;
+
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+.*)?$/i);
+  if (us) {
+    const mm = Number(us[1]);
+    const dd = Number(us[2]);
+    const yy = us[3];
+    const yyyy = yy.length === 2 ? (Number(yy) >= 70 ? 1900 + Number(yy) : 2000 + Number(yy)) : Number(yy);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31 && yyyy >= 1900 && yyyy <= 9999) {
+      return `${pad2(mm)}/${pad2(dd)}/${yyyy}`;
+    }
+  }
+
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
+  if (iso) {
+    const yyyy = Number(iso[1]);
+    const mm = Number(iso[2]);
+    const dd = Number(iso[3]);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      return `${pad2(mm)}/${pad2(dd)}/${yyyy}`;
+    }
+  }
+
+  return null;
+}
+
+function dateSortValue(v: Cell): number {
+  if (typeof v === 'number') return v;
+  const d = toDateString(v);
+  if (!d) return 0;
+  const m = d.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return 0;
+  return Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+}
+
+function dateKey(v: Cell): string {
+  const d = toDateString(v);
+  if (d) return d;
+  if (typeof v === 'string') return v.trim();
+  if (typeof v === 'number') return String(v);
+  return '';
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmt(v: Cell): string {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+  if (v instanceof Date) return toDateString(v) ?? '';
   if (typeof v === 'number') {
-    if (Math.abs(v) >= 1000) return v.toLocaleString('en-AU', { maximumFractionDigits: 2 });
+    if (Math.abs(v) >= 1000) return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
     return String(v);
   }
   return String(v).trim();
@@ -432,7 +501,7 @@ async function downloadXLSX(
     const ks = new Set<string>();
     for (const r of rs) {
       const c = String(r.charge ?? '').trim();
-      const f = r.from instanceof Date ? r.from.toISOString() : String(r.from ?? '').trim();
+      const f = dateKey(r.from);
       if (c) ks.add(`${c}\x00${f}`);
     }
     rsKeySetByTenant.set(idx, ks);
@@ -444,18 +513,13 @@ async function downloadXLSX(
     if (ks.size === 0) return cs;
     return cs.filter(r => {
       const c = String(r.charge ?? '').trim();
-      const f = r.from instanceof Date ? r.from.toISOString() : String(r.from ?? '').trim();
+      const f = dateKey(r.from);
       return !ks.has(`${c}\x00${f}`);
     });
   };
 
   // ── Helper: date value → sort key ────────────────────────────────────────
-  const dNum = (v: Cell): number => {
-    if (v instanceof Date) return v.getTime();
-    if (typeof v === 'number') return v;
-    if (typeof v === 'string') { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
-    return 0;
-  };
+  const dNum = (v: Cell): number => dateSortValue(v);
 
   // ── Unique charge codes for Rent Steps ───────────────────────────────────
   const rsCodes: string[] = [];
@@ -560,37 +624,25 @@ async function downloadXLSX(
     (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
   );
 
-  // Format Date objects as mm/dd/yyyy strings to avoid UTC conversion by ExcelJS
-  const fmtDate = (v: Cell): string | null => {
-    if (v instanceof Date) {
-      const m = v.getMonth() + 1;
-      const d = v.getDate();
-      const y = v.getFullYear();
-      return `${m}/${d}/${y}`;
-    }
-    if (typeof v === 'string' && v.trim()) return v.trim();
-    return null;
-  };
-
   const dataRows: X[][] = tenants.map(({ base, rs, cs }) => {
     const row = mk();
     for (let i = 0; i < nM; i++) {
       const v = base[MAIN_KEYS[i]] as Cell;
       if (dateMainCols.has(i)) {
-        row[i] = fmtDate(v);
+        row[i] = toDateString(v);
       } else {
-        row[i] = v instanceof Date ? fmtDate(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
+        row[i] = v instanceof Date ? toDateString(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
       }
     }
     for (const code of rsCodes) {
       const steps = rs.filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
       const s = rsStart(code);
-      steps.forEach((st, p) => { row[s + p * 2] = fmtDate(st.from); row[s + p * 2 + 1] = rate(st, base); });
+      steps.forEach((st, p) => { row[s + p * 2] = toDateString(st.from); row[s + p * 2 + 1] = rate(st, base); });
     }
     for (const code of csCodes) {
       const charges = filteredCS(base._tenantIdx, cs).filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
       const s = csStart(code);
-      charges.forEach((ch, p) => { row[s + p * 2] = fmtDate(ch.from); row[s + p * 2 + 1] = rate(ch, base); });
+      charges.forEach((ch, p) => { row[s + p * 2] = toDateString(ch.from); row[s + p * 2 + 1] = rate(ch, base); });
     }
     return row;
   });
@@ -675,8 +727,6 @@ async function downloadXLSX(
     });
   });
 
-  const DATE_FMT = 'mm/dd/yyyy';
-
   dataRows.forEach((dataRow, ri) => {
     const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
     exRow.height = 15;
@@ -687,8 +737,8 @@ async function downloadXLSX(
       cell.font = { size: 10, name: 'Calibri', color: { argb: PAL.dark } };
       cell.border = mkBorder('hair');
 
-      if (cell.value instanceof Date || dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'))) {
-        cell.numFmt = DATE_FMT;
+      if (dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'))) {
+        if (typeof cell.value === 'number') cell.numFmt = 'mm/dd/yyyy';
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
       } else if (typeof cell.value === 'number') {
         cell.numFmt = '#,##0.00';
@@ -873,7 +923,9 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
                       );
                     }
 
-                    const display = fmt(raw as Cell);
+                    const display = DATE_COL_KEYS.has(col.key)
+                      ? (toDateString(raw as Cell) ?? (typeof raw === 'string' ? raw.trim() : ''))
+                      : fmt(raw as Cell);
                     return (
                       <td
                         key={col.key}
