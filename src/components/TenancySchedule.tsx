@@ -555,6 +555,11 @@ async function downloadXLSX(
     return ann !== null && area ? ann / area : null;
   };
 
+  // leaseFrom / leaseTo column indices (needed before building data rows)
+  const dateMainCols = new Set(
+    (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
+  );
+
   // Format Date objects as mm/dd/yyyy strings to avoid UTC conversion by ExcelJS
   const fmtDate = (v: Cell): string | null => {
     if (v instanceof Date) {
