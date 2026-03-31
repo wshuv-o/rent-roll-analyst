@@ -1,9 +1,9 @@
-// src/components/MallRentRoll.tsx — Mall Rent Roll display + 2-sheet Excel export
+// src/components/MallRentRoll.tsx — Mall Rent Roll display + Excel exports
 import { useMemo } from 'react';
 import type { MallRentRollTenant } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 import { DEFAULT_CHARGE_CODE_MAPPING } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 import { downloadSemiFinalRR } from '@/lib/semi-final-export';
-import * as XLSX from 'xlsx';
+import { downloadFinalRR } from '@/lib/final-rr-export';
 
 type Cell = string | number | Date | null;
 
