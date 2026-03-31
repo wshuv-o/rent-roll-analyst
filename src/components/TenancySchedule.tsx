@@ -60,17 +60,19 @@ function toDateString(v: Cell): string | null {
   if (v === null || v === undefined) return null;
 
   if (v instanceof Date) {
-    const y = v.getUTCFullYear();
-    const m = v.getUTCMonth() + 1;
-    const d = v.getUTCDate();
+    // Keep calendar day exactly as represented in the source workbook.
+    // Never use UTC getters here (they can shift dates by one day).
+    const y = v.getFullYear();
+    const m = v.getMonth() + 1;
+    const d = v.getDate();
     return `${pad2(m)}/${pad2(d)}/${y}`;
   }
 
-  if (typeof v === 'number' && v > 20000 && v < 90000) {
-    const ms = Math.round((v - 25569) * 86400 * 1000);
-    const dt = new Date(ms);
-    if (!isNaN(dt.getTime())) {
-      return `${pad2(dt.getUTCMonth() + 1)}/${pad2(dt.getUTCDate())}/${dt.getUTCFullYear()}`;
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+    // Parse Excel serial directly to date parts (timezone-free).
+    const p = XLSX.SSF.parse_date_code(v);
+    if (p && p.y && p.m && p.d) {
+      return `${pad2(p.m)}/${pad2(p.d)}/${p.y}`;
     }
   }
 
