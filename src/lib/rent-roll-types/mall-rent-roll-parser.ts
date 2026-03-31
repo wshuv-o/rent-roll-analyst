@@ -725,6 +725,9 @@ export function parseMallRentRoll(data: Cell[][], addLog?: LogFn): MallRentRollT
         });
       }
       tryExtractOverage(row, C, currentTenant);
+      // Also check for metadata on charge rows (narrow format has metadata labels
+      // on the same row as charge data in different columns)
+      extractMetadata(row, currentTenant, C.leaseId, C.leaseId + 2);
       currentTenant.rawRows.push([...row]);
       continue;
     }
