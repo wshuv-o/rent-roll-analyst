@@ -49,7 +49,7 @@ function colToRef(col: number, row: number): string {
 
 // Group color definitions
 const GRP = {
-  identity:   { bg: '1B2A4A', label: 'Identity' },
+  identity:   { bg: '1f4e78', label: 'Identity' },
   charge:     { bg: '2D5F2D', label: 'Current Charge' },
   annual:     { bg: '4A2D6A', label: 'Annual Totals' },
   codes:      { bg: '3D4F5F', label: 'Charge Codes' },
