@@ -29,15 +29,13 @@ function fillBg(hex: string): ExcelJS.Fill {
 
 function fmtCell(v: Cell): string | number {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toLocaleDateString('en-US');
-  if (typeof v === 'number') {
-    if (v > 20000 && v < 60000) {
-      const d = new Date(1899, 11, 30);
-      d.setDate(d.getDate() + v);
-      if (!isNaN(d.getTime())) return d.toLocaleDateString('en-US');
-    }
-    return v;
+  if (v instanceof Date) {
+    const m = v.getMonth() + 1;
+    const d = v.getDate();
+    const y = v.getFullYear();
+    return `${m}/${d}/${y}`;
   }
+  if (typeof v === 'number') return v;
   return String(v).trim();
 }
 
