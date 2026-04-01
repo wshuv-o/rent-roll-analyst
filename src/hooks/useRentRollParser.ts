@@ -90,6 +90,8 @@ export function useRentRollParser() {
   const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
   // Rich mall-rent-roll result
   const [mallRentRollTenants, setMallRentRollTenants] = useState<MallRentRollTenant[]>([]);
+  // Rent roll date (user-provided, used for current-charges calculation in tenancy schedule export)
+  const [rentRollDate, setRentRollDate] = useState<string>('');
 
   const sheetDataRef = useRef<(string | number | Date | null)[][]>([]);
   const streamingEntryRef = useRef<string | null>(null);
@@ -514,6 +516,7 @@ export function useRentRollParser() {
     // anywhere TenantObject[] is not enough (e.g. a dedicated schedule view).
     tenancyScheduleTenants,
     mallRentRollTenants,
+    rentRollDate, setRentRollDate,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,

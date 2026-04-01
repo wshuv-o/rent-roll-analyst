@@ -20,6 +20,7 @@ const Index = () => {
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
     selectedRentRollType, tenancyScheduleTenants, mallRentRollTenants,
+    rentRollDate, setRentRollDate,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
     handleColumnRename, handleCreateCustomGroup,
@@ -154,6 +155,8 @@ const Index = () => {
                 tenants={tenancyScheduleTenants}
                 fileName={fileName}
                 onBack={goBackToConfirm}
+                rentRollDate={rentRollDate}
+                onRentRollDateChange={setRentRollDate}
               />
             </div>
           )}

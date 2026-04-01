@@ -472,6 +472,8 @@ async function downloadXLSX(
   rows: FlatRow[],
   fileName: string,
   mappings: Record<string, string> = {},
+  categories: string[] = [],
+  rentRollDate: string = '',
 ) {
   type X = string | number | Date | null;
 
@@ -500,7 +502,6 @@ async function downloadXLSX(
   const tenants = [...tMap.values()];
 
   // ── Per-tenant RS key sets: compound (charge + fromDate) ─────────────────
-  // Used to exclude from CS only those (charge, date) pairs already in RS for that tenant.
   const rsKeySetByTenant = new Map<number, Set<string>>();
   for (const [idx, { rs }] of tMap.entries()) {
     const ks = new Set<string>();
@@ -512,7 +513,6 @@ async function downloadXLSX(
     rsKeySetByTenant.set(idx, ks);
   }
 
-  // Filter a tenant's CS rows: remove any (charge, from) already present in their RS
   const filteredCS = (tenantIdx: number, cs: FlatRow[]): FlatRow[] => {
     const ks = rsKeySetByTenant.get(tenantIdx) ?? new Set<string>();
     if (ks.size === 0) return cs;
@@ -523,100 +523,167 @@ async function downloadXLSX(
     });
   };
 
-  // ── Helper: date value → sort key ────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const dNum = (v: Cell): number => dateSortValue(v);
 
-  // ── Unique charge codes for Rent Steps ───────────────────────────────────
-  const rsCodes: string[] = [];
-  const rsSet = new Set<string>();
-  for (const { rs } of tenants)
-    for (const r of rs) { const c = String(r.charge ?? '').trim(); if (c && !rsSet.has(c)) { rsSet.add(c); rsCodes.push(c); } }
+  // Build a mapping from charge code → category using the (code, type) pair key
+  const codeType: Record<string, string> = {};
+  for (const { rs, cs } of tenants) {
+    for (const r of [...rs, ...cs]) {
+      const c = String(r.charge ?? '').trim();
+      if (c && !codeType[c]) codeType[c] = String(r.chargeType ?? '').trim();
+    }
+  }
+  const codeCategory = (code: string): string =>
+    mappings[pairKey(code, codeType[code] ?? '')] || '';
 
-  const rsMax: Record<string, number> = Object.fromEntries(rsCodes.map(c => [c, 0]));
-  for (const { rs } of tenants) {
-    const cnt: Record<string, number> = {};
-    for (const r of rs) { const c = String(r.charge ?? '').trim(); if (c) cnt[c] = (cnt[c] ?? 0) + 1; }
-    for (const c of rsCodes) rsMax[c] = Math.max(rsMax[c], cnt[c] ?? 0);
+  // Merge RS + filtered CS into one list per tenant (CS is superset, RS fills gaps)
+  const allRows = (t: TG): FlatRow[] => [...t.rs, ...filteredCS(t.base._tenantIdx, t.cs)];
+
+  // Parse rent roll date to sort value for range checks
+  const rrDateNum = rentRollDate ? Date.parse(rentRollDate) : 0;
+
+  // Check if a row is active on a given date (from <= date <= to)
+  const isActiveOn = (r: FlatRow, dateNum: number): boolean => {
+    if (!dateNum) return false;
+    const f = dNum(r.from);
+    const t = dNum(r.to);
+    if (!f) return false;
+    return f <= dateNum && (!t || t >= dateNum);
+  };
+
+  // ── Section A: Current Charges (1 col per mapping category, annual) ──────
+  // Use categories from the mapping dialog (exclude 'Excluded')
+  const ccCategories = categories.filter(c => c !== 'Excluded');
+
+  // ── Section B: Rent Bumps ────────────────────────────────────────────────
+  // Collect unique from-dates across all "Rent"-mapped codes per tenant, then find max count
+  const rentBumpsByTenant: { date: number; dateStr: string; totalAnnual: number; psf: number | null }[][] = [];
+  let maxBumps = 0;
+  for (const t of tenants) {
+    const all = allRows(t);
+    const rentRows = all.filter(r => codeCategory(String(r.charge ?? '').trim()) === 'Rent');
+    // Collect unique from-dates
+    const fromDates = new Map<number, string>(); // sortVal → dateStr
+    for (const r of rentRows) {
+      const sv = dNum(r.from);
+      if (sv && !fromDates.has(sv)) fromDates.set(sv, toDateString(r.from) ?? '');
+    }
+    const sortedDates = [...fromDates.entries()].sort((a, b) => a[0] - b[0]);
+    const area = toNumber(t.base.area);
+    const bumps = sortedDates.map(([sv, ds]) => {
+      // Sum annual amounts of all Rent rows active on this date
+      let totalAnnual = 0;
+      for (const r of rentRows) {
+        const f = dNum(r.from);
+        const to = dNum(r.to);
+        if (f && f <= sv && (!to || to >= sv)) {
+          totalAnnual += toNumber(r.annual) ?? 0;
+        }
+      }
+      return {
+        date: sv,
+        dateStr: ds,
+        totalAnnual,
+        psf: area ? totalAnnual / area : null,
+      };
+    });
+    rentBumpsByTenant.push(bumps);
+    maxBumps = Math.max(maxBumps, bumps.length);
   }
 
-  // ── Unique charge codes for Charge Schedules ─────────────────────────────
-  // A code gets a CS column if any tenant has CS rows for it after per-tenant
-  // (charge, from) exclusion. Codes can overlap with rsCodes — that's intentional.
-  const csCodes: string[] = [];
-  const csSet = new Set<string>();
-  const codeType: Record<string, string> = {};
-  for (const { base, cs } of tenants)
-    for (const r of filteredCS(base._tenantIdx, cs)) {
+  // ── Section C: All Charge Codes (date + PSF per code) ────────────────────
+  // Gather all unique charge codes across both RS and CS
+  const allCodes: string[] = [];
+  const allCodeSet = new Set<string>();
+  for (const t of tenants) {
+    for (const r of allRows(t)) {
       const c = String(r.charge ?? '').trim();
-      if (!c) continue;
-      if (!codeType[c]) codeType[c] = String(r.chargeType ?? '').trim();
-      if (!csSet.has(c)) { csSet.add(c); csCodes.push(c); }
+      if (c && !allCodeSet.has(c)) { allCodeSet.add(c); allCodes.push(c); }
     }
+  }
 
-  // Sort CS codes by mapping category
+  // Sort by mapping category order then alphabetical
   const MAP_ORD = ['Rent', 'Opex', 'Utility', 'Management', 'Insurance', 'Tax', 'Excluded'];
-  csCodes.sort((a, b) => {
-    const ia = MAP_ORD.indexOf(mappings[pairKey(a, codeType[a] ?? '')] ?? '');
-    const ib = MAP_ORD.indexOf(mappings[pairKey(b, codeType[b] ?? '')] ?? '');
-    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  allCodes.sort((a, b) => {
+    const ia = MAP_ORD.indexOf(codeCategory(a));
+    const ib = MAP_ORD.indexOf(codeCategory(b));
+    const oa = ia < 0 ? 999 : ia;
+    const ob = ib < 0 ? 999 : ib;
+    return oa !== ob ? oa - ob : a.localeCompare(b);
   });
 
-  const csMax: Record<string, number> = Object.fromEntries(csCodes.map(c => [c, 0]));
-  for (const { base, cs } of tenants) {
+  // Max occurrences per code across all tenants
+  const codeMax: Record<string, number> = Object.fromEntries(allCodes.map(c => [c, 0]));
+  for (const t of tenants) {
     const cnt: Record<string, number> = {};
-    for (const r of filteredCS(base._tenantIdx, cs)) { const c = String(r.charge ?? '').trim(); if (c) cnt[c] = (cnt[c] ?? 0) + 1; }
-    for (const c of csCodes) csMax[c] = Math.max(csMax[c], cnt[c] ?? 0);
+    for (const r of allRows(t)) {
+      const c = String(r.charge ?? '').trim();
+      if (c) cnt[c] = (cnt[c] ?? 0) + 1;
+    }
+    for (const c of allCodes) codeMax[c] = Math.max(codeMax[c], cnt[c] ?? 0);
   }
 
   // ── Column layout ─────────────────────────────────────────────────────────
-  const rsTotal = rsCodes.reduce((s, c) => s + 2 * rsMax[c], 0);
-  const csTotal = csCodes.reduce((s, c) => s + 2 * csMax[c], 0);
+  // [Tenant Info] [blank?] [Current Charges] [blank?] [Rent Bumps] [blank?] [All Charge Codes]
+  const ccTotal = ccCategories.length;       // 1 col per category
+  const rbTotal = maxBumps * 2;              // date + PSF per bump
+  const acTotal = allCodes.reduce((s, c) => s + 2 * codeMax[c], 0); // date + PSF per code step
 
-  const COL_RS    = nM;                         // rent steps start
-  const COL_BLANK = COL_RS + rsTotal;            // separator (only when both sections present)
-  const COL_CS    = rsTotal > 0 ? COL_BLANK + 1 : nM;
-  const TOTAL     = (csTotal > 0 ? COL_CS + csTotal : COL_RS + rsTotal);
+  let col = nM;
+  const COL_CC = col; col += ccTotal;
+  const COL_B1 = ccTotal > 0 && rbTotal > 0 ? col++ : col; // blank separator
+  const COL_RB = col; col += rbTotal;
+  const COL_B2 = rbTotal > 0 && acTotal > 0 ? col++ : col; // blank separator
+  const COL_AC = col; col += acTotal;
+  const TOTAL = col;
 
-  const rsStart = (code: string): number => { let c = COL_RS;  for (const x of rsCodes) { if (x === code) return c; c += 2 * rsMax[x]; } return c; };
-  const csStart = (code: string): number => { let c = COL_CS;  for (const x of csCodes) { if (x === code) return c; c += 2 * csMax[x]; } return c; };
+  const acStart = (code: string): number => {
+    let c = COL_AC;
+    for (const x of allCodes) { if (x === code) return c; c += 2 * codeMax[x]; }
+    return c;
+  };
 
   // ── Build 4 header rows ───────────────────────────────────────────────────
   const mk = (): X[] => Array<X>(TOTAL).fill(null);
   const h1 = mk(); const h2 = mk(); const h3 = mk(); const h4 = mk();
 
-  // Fill every cell — no merges
+  // Row 1: section labels
   for (let i = 0; i < nM; i++) h1[i] = 'Tenant Info';
+  if (ccTotal > 0) for (let i = COL_CC; i < COL_CC + ccTotal; i++) h1[i] = 'Current Charges';
+  if (rbTotal > 0) for (let i = COL_RB; i < COL_RB + rbTotal; i++) h1[i] = 'Rent Bumps';
+  if (acTotal > 0) for (let i = COL_AC; i < COL_AC + acTotal; i++) h1[i] = 'Charge Codes';
+
+  // Row 4: column labels for tenant info
   for (let i = 0; i < nM; i++) h4[i] = MAIN_HDRS[i];
 
-  if (rsTotal > 0) for (let i = COL_RS; i < COL_RS + rsTotal; i++) h1[i] = 'Rent Steps';
-  if (csTotal > 0) for (let i = COL_CS; i < COL_CS + csTotal; i++) h1[i] = 'Charge Schedules';
+  // Current Charges headers
+  for (let i = 0; i < ccTotal; i++) {
+    h2[COL_CC + i] = ccCategories[i];
+    h3[COL_CC + i] = 'Annual';
+    h4[COL_CC + i] = ccCategories[i];
+  }
 
-  for (const code of rsCodes) {
-    const s = rsStart(code);
-    for (let p = 0; p < rsMax[code]; p++) {
-      h2[s + p * 2]     = code;
-      h2[s + p * 2 + 1] = code;
-      h3[s + p * 2]     = `Rent Step ${p + 1}`;
-      h3[s + p * 2 + 1] = `Rent Step ${p + 1}`;
-      h4[s + p * 2]     = `Rent Date ${p + 1}`;
-      h4[s + p * 2 + 1] = `Rent Rate ${p + 1}`;
+  // Rent Bumps headers
+  for (let p = 0; p < maxBumps; p++) {
+    const ci = COL_RB + p * 2;
+    h2[ci] = `Bump ${p + 1}`;     h2[ci + 1] = `Bump ${p + 1}`;
+    h3[ci] = 'Date';               h3[ci + 1] = 'PSF';
+    h4[ci] = `Bump Date ${p + 1}`; h4[ci + 1] = `Bump PSF ${p + 1}`;
+  }
+
+  // All Charge Codes headers
+  for (const code of allCodes) {
+    const s = acStart(code);
+    const catLabel = codeCategory(code) || code;
+    for (let p = 0; p < codeMax[code]; p++) {
+      h2[s + p * 2]     = code;          h2[s + p * 2 + 1] = code;
+      h3[s + p * 2]     = catLabel;       h3[s + p * 2 + 1] = catLabel;
+      h4[s + p * 2]     = `Date ${p + 1}`; h4[s + p * 2 + 1] = `PSF ${p + 1}`;
     }
   }
 
-  for (const code of csCodes) {
-    const s = csStart(code);
-    const label = mappings[pairKey(code, codeType[code] ?? '')] || code;
-    for (let p = 0; p < csMax[code]; p++) {
-      h2[s + p * 2]     = code;
-      h2[s + p * 2 + 1] = code;
-      h3[s + p * 2]     = label;
-      h3[s + p * 2 + 1] = label;
-      h4[s + p * 2]     = `Date ${p + 1}`;
-      h4[s + p * 2 + 1] = `Rate ${p + 1}`;
-    }
-  }
-
-  // ── Build data rows (one per tenant, starting at row 5) ──────────────────
+  // ── Build data rows ───────────────────────────────────────────────────────
   const rate = (r: FlatRow, base: FlatRow): number | null => {
     const apa = toNumber(r.annualPerArea);
     if (apa !== null) return apa;
@@ -624,13 +691,15 @@ async function downloadXLSX(
     return ann !== null && area ? ann / area : null;
   };
 
-  // leaseFrom / leaseTo column indices (needed before building data rows)
   const dateMainCols = new Set(
     (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
   );
 
-  const dataRows: X[][] = tenants.map(({ base, rs, cs }) => {
+  const dataRows: X[][] = tenants.map((t, ti) => {
+    const { base } = t;
     const row = mk();
+
+    // Tenant info
     for (let i = 0; i < nM; i++) {
       const v = base[MAIN_KEYS[i]] as Cell;
       if (dateMainCols.has(i)) {
@@ -639,16 +708,40 @@ async function downloadXLSX(
         row[i] = v instanceof Date ? toDateString(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
       }
     }
-    for (const code of rsCodes) {
-      const steps = rs.filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
-      const s = rsStart(code);
-      steps.forEach((st, p) => { row[s + p * 2] = toDateString(st.from); row[s + p * 2 + 1] = rate(st, base); });
+
+    // Current Charges: sum annual by category for rows active on rent roll date
+    const all = allRows(t);
+    for (let ci = 0; ci < ccTotal; ci++) {
+      const cat = ccCategories[ci];
+      let sum = 0;
+      for (const r of all) {
+        const code = String(r.charge ?? '').trim();
+        if (codeCategory(code) === cat && isActiveOn(r, rrDateNum)) {
+          sum += toNumber(r.annual) ?? 0;
+        }
+      }
+      row[COL_CC + ci] = sum || null;
     }
-    for (const code of csCodes) {
-      const charges = filteredCS(base._tenantIdx, cs).filter(r => String(r.charge ?? '').trim() === code).sort((a, b) => dNum(a.from) - dNum(b.from));
-      const s = csStart(code);
-      charges.forEach((ch, p) => { row[s + p * 2] = toDateString(ch.from); row[s + p * 2 + 1] = rate(ch, base); });
+
+    // Rent Bumps
+    const bumps = rentBumpsByTenant[ti];
+    for (let p = 0; p < bumps.length; p++) {
+      row[COL_RB + p * 2] = bumps[p].dateStr;
+      row[COL_RB + p * 2 + 1] = bumps[p].psf;
     }
+
+    // All Charge Codes: date + PSF per code
+    for (const code of allCodes) {
+      const codeRows = all
+        .filter(r => String(r.charge ?? '').trim() === code)
+        .sort((a, b) => dNum(a.from) - dNum(b.from));
+      const s = acStart(code);
+      codeRows.forEach((cr, p) => {
+        row[s + p * 2] = toDateString(cr.from);
+        row[s + p * 2 + 1] = rate(cr, base);
+      });
+    }
+
     return row;
   });
 
@@ -661,26 +754,30 @@ async function downloadXLSX(
   });
 
   // Column widths
+  const blankCols = new Set<number>();
+  if (ccTotal > 0 && rbTotal > 0) blankCols.add(COL_B1);
+  if (rbTotal > 0 && acTotal > 0) blankCols.add(COL_B2);
+
   ws2.columns = Array.from({ length: TOTAL }, (_, i) => ({
     width: i === 0 ? 34
-         : (i === COL_BLANK && rsTotal > 0 && csTotal > 0) ? 2
+         : blankCols.has(i) ? 2
          : i < nM ? 16
          : 14,
   }));
 
   // ── Color palette (ARGB) ─────────────────────────────────────────────────
-  // Tenant Info: blue family  |  Rent Steps: green family  |  CS: orange family
   const PAL = {
     ti1: 'FF1F3864', ti2: 'FF2E75B6', ti3: 'FF9DC3E6', ti4: 'FFDEEAF1',
-    rs1: 'FF1E4620', rs2: 'FF548235', rs3: 'FFA9D18E', rs4: 'FFE2EFDA',
-    cs1: 'FF833C00', cs2: 'FFC55A11', cs3: 'FFF4B183', cs4: 'FFFCE4D6',
+    cc1: 'FF4A235A', cc2: 'FF7D3C98', cc3: 'FFBB8FCE', cc4: 'FFF4ECF7',
+    rb1: 'FF1E4620', rb2: 'FF548235', rb3: 'FFA9D18E', rb4: 'FFE2EFDA',
+    ac1: 'FF833C00', ac2: 'FFC55A11', ac3: 'FFF4B183', ac4: 'FFFCE4D6',
     blank: 'FF303030',
     white: 'FFFFFFFF', dark: 'FF1A1A1A',
     rowOdd: 'FFFFFFFF', rowEven: 'FFF5F7FA',
     borderColor: 'FFB8C4CE',
   };
 
-  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.rs1, PAL.rs2, PAL.cs1, PAL.cs2, PAL.blank]);
+  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.cc1, PAL.cc2, PAL.rb1, PAL.rb2, PAL.ac1, PAL.ac2, PAL.blank]);
 
   const mkFill = (argb: string): ExcelJS.Fill =>
     ({ type: 'pattern', pattern: 'solid', fgColor: { argb } } as ExcelJS.Fill);
@@ -690,11 +787,12 @@ async function downloadXLSX(
     return { top: side, left: side, bottom: side, right: side };
   };
 
-  const colSection = (ci: number): 'tenant' | 'rs' | 'cs' | 'blank' => {
+  const colSection = (ci: number): 'tenant' | 'cc' | 'rb' | 'ac' | 'blank' => {
     if (ci < nM) return 'tenant';
-    if (rsTotal > 0 && ci >= COL_RS && ci < COL_RS + rsTotal) return 'rs';
-    if (ci === COL_BLANK && rsTotal > 0 && csTotal > 0) return 'blank';
-    if (csTotal > 0 && ci >= COL_CS && ci < COL_CS + csTotal) return 'cs';
+    if (blankCols.has(ci)) return 'blank';
+    if (ccTotal > 0 && ci >= COL_CC && ci < COL_CC + ccTotal) return 'cc';
+    if (rbTotal > 0 && ci >= COL_RB && ci < COL_RB + rbTotal) return 'rb';
+    if (acTotal > 0 && ci >= COL_AC && ci < COL_AC + acTotal) return 'ac';
     return 'blank';
   };
 
@@ -703,8 +801,9 @@ async function downloadXLSX(
     if (s === 'blank') return PAL.blank;
     const map = {
       tenant: [PAL.ti1, PAL.ti2, PAL.ti3, PAL.ti4],
-      rs:     [PAL.rs1, PAL.rs2, PAL.rs3, PAL.rs4],
-      cs:     [PAL.cs1, PAL.cs2, PAL.cs3, PAL.cs4],
+      cc:     [PAL.cc1, PAL.cc2, PAL.cc3, PAL.cc4],
+      rb:     [PAL.rb1, PAL.rb2, PAL.rb3, PAL.rb4],
+      ac:     [PAL.ac1, PAL.ac2, PAL.ac3, PAL.ac4],
     } as const;
     return map[s][level - 1];
   };
@@ -799,9 +898,11 @@ interface Props {
   tenants: TenancyScheduleTenant[];
   fileName: string;
   onBack: () => void;
+  rentRollDate: string;
+  onRentRollDateChange: (date: string) => void;
 }
 
-export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
+export function TenancyScheduleTable({ tenants, fileName, onBack, rentRollDate, onRentRollDateChange }: Props) {
   const rows = useMemo(() => flatten(tenants), [tenants]);
 
   // Unique (charge, chargeType) pairs for the mapping dialog, sorted by Lease Type then Code
@@ -819,6 +920,28 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
       const ct = a.chargeType.localeCompare(b.chargeType);
       return ct !== 0 ? ct : a.charge.localeCompare(b.charge);
     });
+  }, [rows]);
+
+  // ── RS ⊆ CS validation: every charge code in Rent Steps must exist in Charge Schedules ──
+  const rsCsMismatch = useMemo<Map<number, string[]>>(() => {
+    const byTenant = new Map<number, { rsCodes: Set<string>; csCodes: Set<string> }>();
+    for (const row of rows) {
+      const i = row._tenantIdx;
+      if (!byTenant.has(i)) byTenant.set(i, { rsCodes: new Set(), csCodes: new Set() });
+      const g = byTenant.get(i)!;
+      const sec = String(row._section ?? '').toLowerCase();
+      const c = String(row.charge ?? '').trim();
+      if (!c) continue;
+      if (sec.includes('rent') && sec.includes('step')) g.rsCodes.add(c);
+      else if (row._section) g.csCodes.add(c);
+    }
+    const warnings = new Map<number, string[]>();
+    for (const [idx, { rsCodes, csCodes }] of byTenant.entries()) {
+      if (rsCodes.size === 0) continue;
+      const missing = [...rsCodes].filter(c => !csCodes.has(c));
+      if (missing.length > 0) warnings.set(idx, missing);
+    }
+    return warnings;
   }, [rows]);
 
   const [showMapping, setShowMapping] = useState(false);
@@ -845,8 +968,29 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
           <span className="text-[11px] font-mono text-foreground">
             {tenants.length} tenant{tenants.length !== 1 ? 's' : ''} · {rows.length} row{rows.length !== 1 ? 's' : ''}
           </span>
+          {rsCsMismatch.size > 0 && (
+            <span
+              className="text-[11px] font-mono text-amber-400 bg-amber-400/10 border border-amber-400/30 px-2 py-0.5 rounded"
+              title={[...rsCsMismatch.entries()].map(([idx, missing]) => {
+                const t = rows.find(r => r._tenantIdx === idx);
+                const name = t ? fmt(t.lease) || fmt(t.unit) || `#${idx}` : `#${idx}`;
+                return `${name}: ${missing.join(', ')}`;
+              }).join('\n')}
+            >
+              ⚠ {rsCsMismatch.size} tenant{rsCsMismatch.size !== 1 ? 's' : ''} with RS/CS mismatch
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground">
+            Rent Roll Date
+            <input
+              type="date"
+              value={rentRollDate}
+              onChange={e => onRentRollDateChange(e.target.value)}
+              className="px-2 py-1 text-[11px] font-mono rounded border border-panel-border bg-background text-foreground"
+            />
+          </label>
           <button
             onClick={() => downloadFlatXLSX(rows, fileName)}
             className="px-3 py-1.5 text-[11px] font-mono rounded border border-panel-border bg-background hover:border-muted-foreground text-foreground transition-colors flex items-center gap-1.5"
@@ -901,8 +1045,16 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
             {rows.map((row, ri) => {
               const isTenantBoundary = row._tenantIdx !== lastTenantIdx;
               lastTenantIdx = row._tenantIdx;
+              const mismatchLines = isTenantBoundary ? rsCsMismatch.get(row._tenantIdx) : undefined;
 
-              return (
+              return (<>
+                {mismatchLines && (
+                  <tr key={`warn-${ri}`} className="bg-amber-400/5">
+                    <td colSpan={COLS.length} className="px-2 py-1 text-[10px] font-mono text-amber-400 border border-amber-400/20">
+                      ⚠ Charge codes in Rent Steps not found in Charge Schedules: {mismatchLines.join(', ')}
+                    </td>
+                  </tr>
+                )}
                 <tr
                   key={ri}
                   className={[
@@ -948,7 +1100,7 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
                     );
                   })}
                 </tr>
-              );
+              </>);
             })}
           </tbody>
         </table>
@@ -958,8 +1110,8 @@ export function TenancyScheduleTable({ tenants, fileName, onBack }: Props) {
         <MappingDialog
           uniquePairs={uniquePairs}
           onClose={() => setShowMapping(false)}
-          onExport={(mappings, _categories) => {
-            downloadXLSX(rows, fileName, mappings).then(() => setShowMapping(false));
+          onExport={(mappings, cats) => {
+            downloadXLSX(rows, fileName, mappings, cats, rentRollDate).then(() => setShowMapping(false));
           }}
         />
       )}
