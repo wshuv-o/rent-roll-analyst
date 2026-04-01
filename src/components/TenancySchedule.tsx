@@ -552,48 +552,50 @@ async function downloadXLSX(
     return f <= dateNum && (!t || t >= dateNum);
   };
 
-  // ── Section A: Current Charges (1 col per mapping category, annual) ──────
-  // Use categories from the mapping dialog (exclude 'Excluded')
-  const ccCategories = categories.filter(c => c !== 'Excluded');
+  // ── Section A: Bumps per mapping category ──────────────────────────────────
+  // For each non-Excluded category, compute bumps (date + PSF) like rent bumps.
+  // "Rent" bumps come first, then other categories in order.
+  const bumpCategories = categories.filter(c => c !== 'Excluded');
 
-  // ── Section B: Rent Bumps ────────────────────────────────────────────────
-  // Collect unique from-dates across all "Rent"-mapped codes per tenant, then find max count
-  const rentBumpsByTenant: { date: number; dateStr: string; totalAnnual: number; psf: number | null }[][] = [];
-  let maxBumps = 0;
-  for (const t of tenants) {
-    const all = allRows(t);
-    const rentRows = all.filter(r => codeCategory(String(r.charge ?? '').trim()) === 'Rent');
-    // Collect unique from-dates
-    const fromDates = new Map<number, string>(); // sortVal → dateStr
-    for (const r of rentRows) {
-      const sv = dNum(r.from);
-      if (sv && !fromDates.has(sv)) fromDates.set(sv, toDateString(r.from) ?? '');
-    }
-    const sortedDates = [...fromDates.entries()].sort((a, b) => a[0] - b[0]);
-    const area = toNumber(t.base.area);
-    const bumps = sortedDates.map(([sv, ds]) => {
-      // Sum annual amounts of all Rent rows active on this date
-      let totalAnnual = 0;
-      for (const r of rentRows) {
-        const f = dNum(r.from);
-        const to = dNum(r.to);
-        if (f && f <= sv && (!to || to >= sv)) {
-          totalAnnual += toNumber(r.annual) ?? 0;
-        }
+  type BumpEntry = { dateStr: string; psf: number | null };
+  // bumpsByTenant[catIdx][tenantIdx] = BumpEntry[]
+  const bumpsByTenant: BumpEntry[][][] = [];
+  const maxBumpsPerCat: number[] = [];
+
+  for (let ci = 0; ci < bumpCategories.length; ci++) {
+    const cat = bumpCategories[ci];
+    const perTenant: BumpEntry[][] = [];
+    let maxB = 0;
+    for (const t of tenants) {
+      const all = allRows(t);
+      const catRows = all.filter(r => codeCategory(String(r.charge ?? '').trim()) === cat);
+      // Collect unique from-dates
+      const fromDates = new Map<number, string>();
+      for (const r of catRows) {
+        const sv = dNum(r.from);
+        if (sv && !fromDates.has(sv)) fromDates.set(sv, toDateString(r.from) ?? '');
       }
-      return {
-        date: sv,
-        dateStr: ds,
-        totalAnnual,
-        psf: area ? totalAnnual / area : null,
-      };
-    });
-    rentBumpsByTenant.push(bumps);
-    maxBumps = Math.max(maxBumps, bumps.length);
+      const sortedDates = [...fromDates.entries()].sort((a, b) => a[0] - b[0]);
+      const area = toNumber(t.base.area);
+      const bumps: BumpEntry[] = sortedDates.map(([sv, ds]) => {
+        let totalAnnual = 0;
+        for (const r of catRows) {
+          const f = dNum(r.from);
+          const to = dNum(r.to);
+          if (f && f <= sv && (!to || to >= sv)) {
+            totalAnnual += toNumber(r.annual) ?? 0;
+          }
+        }
+        return { dateStr: ds, psf: area ? totalAnnual / area : null };
+      });
+      perTenant.push(bumps);
+      maxB = Math.max(maxB, bumps.length);
+    }
+    bumpsByTenant.push(perTenant);
+    maxBumpsPerCat.push(maxB);
   }
 
-  // ── Section C: All Charge Codes (date + PSF per code) ────────────────────
-  // Gather all unique charge codes across both RS and CS
+  // ── Section B: Current Charges (1 col per charge code, PSF on rent roll date) ─
   const allCodes: string[] = [];
   const allCodeSet = new Set<string>();
   for (const t of tenants) {
@@ -602,8 +604,6 @@ async function downloadXLSX(
       if (c && !allCodeSet.has(c)) { allCodeSet.add(c); allCodes.push(c); }
     }
   }
-
-  // Sort by mapping category order then alphabetical
   const MAP_ORD = ['Rent', 'Opex', 'Utility', 'Management', 'Insurance', 'Tax', 'Excluded'];
   allCodes.sort((a, b) => {
     const ia = MAP_ORD.indexOf(codeCategory(a));
@@ -613,36 +613,25 @@ async function downloadXLSX(
     return oa !== ob ? oa - ob : a.localeCompare(b);
   });
 
-  // Max occurrences per code across all tenants
-  const codeMax: Record<string, number> = Object.fromEntries(allCodes.map(c => [c, 0]));
-  for (const t of tenants) {
-    const cnt: Record<string, number> = {};
-    for (const r of allRows(t)) {
-      const c = String(r.charge ?? '').trim();
-      if (c) cnt[c] = (cnt[c] ?? 0) + 1;
-    }
-    for (const c of allCodes) codeMax[c] = Math.max(codeMax[c], cnt[c] ?? 0);
-  }
-
   // ── Column layout ─────────────────────────────────────────────────────────
-  // [Tenant Info] [blank?] [Current Charges] [blank?] [Rent Bumps] [blank?] [All Charge Codes]
-  const ccTotal = ccCategories.length;       // 1 col per category
-  const rbTotal = maxBumps * 2;              // date + PSF per bump
-  const acTotal = allCodes.reduce((s, c) => s + 2 * codeMax[c], 0); // date + PSF per code step
+  // [Tenant Info] [Annual Totals per cat] [blank] [Bumps per cat] [blank] [Current Charges per code]
+  const atTotal = bumpCategories.length; // 1 col per mapping category (annual total)
+  const bumpTotalCols = bumpCategories.reduce((s, _, ci) => s + maxBumpsPerCat[ci] * 2, 0);
+  const ccTotal = allCodes.length; // 1 col per charge code (PSF only)
 
   let col = nM;
+  // Annual Totals section
+  const COL_AT = col; col += atTotal;
+  const COL_B1 = atTotal > 0 && bumpTotalCols > 0 ? col++ : col;
+  // Bump sections (one after another)
+  const bumpStarts: number[] = [];
+  for (let ci = 0; ci < bumpCategories.length; ci++) {
+    bumpStarts.push(col);
+    col += maxBumpsPerCat[ci] * 2;
+  }
+  const COL_B2 = bumpTotalCols > 0 && ccTotal > 0 ? col++ : col;
   const COL_CC = col; col += ccTotal;
-  const COL_B1 = ccTotal > 0 && rbTotal > 0 ? col++ : col; // blank separator
-  const COL_RB = col; col += rbTotal;
-  const COL_B2 = rbTotal > 0 && acTotal > 0 ? col++ : col; // blank separator
-  const COL_AC = col; col += acTotal;
   const TOTAL = col;
-
-  const acStart = (code: string): number => {
-    let c = COL_AC;
-    for (const x of allCodes) { if (x === code) return c; c += 2 * codeMax[x]; }
-    return c;
-  };
 
   // ── Build 4 header rows ───────────────────────────────────────────────────
   const mk = (): X[] => Array<X>(TOTAL).fill(null);
@@ -650,37 +639,42 @@ async function downloadXLSX(
 
   // Row 1: section labels
   for (let i = 0; i < nM; i++) h1[i] = 'Tenant Info';
-  if (ccTotal > 0) for (let i = COL_CC; i < COL_CC + ccTotal; i++) h1[i] = 'Current Charges';
-  if (rbTotal > 0) for (let i = COL_RB; i < COL_RB + rbTotal; i++) h1[i] = 'Rent Bumps';
-  if (acTotal > 0) for (let i = COL_AC; i < COL_AC + acTotal; i++) h1[i] = 'Charge Codes';
-
-  // Row 4: column labels for tenant info
   for (let i = 0; i < nM; i++) h4[i] = MAIN_HDRS[i];
 
-  // Current Charges headers
-  for (let i = 0; i < ccTotal; i++) {
-    h2[COL_CC + i] = ccCategories[i];
-    h3[COL_CC + i] = 'Annual';
-    h4[COL_CC + i] = ccCategories[i];
+  // Annual Totals headers
+  if (atTotal > 0) {
+    for (let i = COL_AT; i < COL_AT + atTotal; i++) h1[i] = 'Annual Totals';
+  }
+  for (let i = 0; i < bumpCategories.length; i++) {
+    h2[COL_AT + i] = bumpCategories[i];
+    h3[COL_AT + i] = 'Annual';
+    h4[COL_AT + i] = bumpCategories[i];
   }
 
-  // Rent Bumps headers
-  for (let p = 0; p < maxBumps; p++) {
-    const ci = COL_RB + p * 2;
-    h2[ci] = `Bump ${p + 1}`;     h2[ci + 1] = `Bump ${p + 1}`;
-    h3[ci] = 'Date';               h3[ci + 1] = 'PSF';
-    h4[ci] = `Bump Date ${p + 1}`; h4[ci + 1] = `Bump PSF ${p + 1}`;
-  }
-
-  // All Charge Codes headers
-  for (const code of allCodes) {
-    const s = acStart(code);
-    const catLabel = codeCategory(code) || code;
-    for (let p = 0; p < codeMax[code]; p++) {
-      h2[s + p * 2]     = code;          h2[s + p * 2 + 1] = code;
-      h3[s + p * 2]     = catLabel;       h3[s + p * 2 + 1] = catLabel;
-      h4[s + p * 2]     = `Date ${p + 1}`; h4[s + p * 2 + 1] = `PSF ${p + 1}`;
+  // Bump section headers
+  for (let ci = 0; ci < bumpCategories.length; ci++) {
+    const cat = bumpCategories[ci];
+    const s = bumpStarts[ci];
+    const w = maxBumpsPerCat[ci] * 2;
+    for (let i = s; i < s + w; i++) h1[i] = `${cat} Bumps`;
+    for (let p = 0; p < maxBumpsPerCat[ci]; p++) {
+      const c = s + p * 2;
+      h2[c] = `${cat} ${p + 1}`;       h2[c + 1] = `${cat} ${p + 1}`;
+      h3[c] = 'Date';                   h3[c + 1] = 'PSF';
+      h4[c] = `${cat} Date ${p + 1}`;   h4[c + 1] = `${cat} PSF ${p + 1}`;
     }
+  }
+
+  // Current Charges headers (1 col per charge code)
+  if (ccTotal > 0) {
+    for (let i = COL_CC; i < COL_CC + ccTotal; i++) h1[i] = 'Current Charges';
+  }
+  for (let i = 0; i < allCodes.length; i++) {
+    const code = allCodes[i];
+    const catLabel = codeCategory(code) || code;
+    h2[COL_CC + i] = code;
+    h3[COL_CC + i] = catLabel;
+    h4[COL_CC + i] = 'PSF';
   }
 
   // ── Build data rows ───────────────────────────────────────────────────────
@@ -709,10 +703,10 @@ async function downloadXLSX(
       }
     }
 
-    // Current Charges: sum annual by category for rows active on rent roll date
+    // Annual Totals: sum annual by category for rows active on rent roll date
     const all = allRows(t);
-    for (let ci = 0; ci < ccTotal; ci++) {
-      const cat = ccCategories[ci];
+    for (let ci = 0; ci < bumpCategories.length; ci++) {
+      const cat = bumpCategories[ci];
       let sum = 0;
       for (const r of all) {
         const code = String(r.charge ?? '').trim();
@@ -720,26 +714,29 @@ async function downloadXLSX(
           sum += toNumber(r.annual) ?? 0;
         }
       }
-      row[COL_CC + ci] = sum || null;
+      row[COL_AT + ci] = sum || null;
     }
 
-    // Rent Bumps
-    const bumps = rentBumpsByTenant[ti];
-    for (let p = 0; p < bumps.length; p++) {
-      row[COL_RB + p * 2] = bumps[p].dateStr;
-      row[COL_RB + p * 2 + 1] = bumps[p].psf;
+    // Bumps per category
+    for (let ci = 0; ci < bumpCategories.length; ci++) {
+      const bumps = bumpsByTenant[ci][ti];
+      const s = bumpStarts[ci];
+      for (let p = 0; p < bumps.length; p++) {
+        row[s + p * 2] = bumps[p].dateStr;
+        row[s + p * 2 + 1] = bumps[p].psf;
+      }
     }
 
-    // All Charge Codes: date + PSF per code
-    for (const code of allCodes) {
-      const codeRows = all
-        .filter(r => String(r.charge ?? '').trim() === code)
-        .sort((a, b) => dNum(a.from) - dNum(b.from));
-      const s = acStart(code);
-      codeRows.forEach((cr, p) => {
-        row[s + p * 2] = toDateString(cr.from);
-        row[s + p * 2 + 1] = rate(cr, base);
-      });
+    // Current Charges: PSF of charge code row active on rent roll date
+    for (let i = 0; i < allCodes.length; i++) {
+      const code = allCodes[i];
+      // Find the row for this code that is active on the rent roll date
+      const activeRow = all.find(r =>
+        String(r.charge ?? '').trim() === code && isActiveOn(r, rrDateNum)
+      );
+      if (activeRow) {
+        row[COL_CC + i] = rate(activeRow, base);
+      }
     }
 
     return row;
@@ -754,30 +751,31 @@ async function downloadXLSX(
   });
 
   // Column widths
-  const blankCols = new Set<number>();
-  if (ccTotal > 0 && rbTotal > 0) blankCols.add(COL_B1);
-  if (rbTotal > 0 && acTotal > 0) blankCols.add(COL_B2);
+  const blankColSet = new Set<number>();
+  if (atTotal > 0 && bumpTotalCols > 0) blankColSet.add(COL_B1);
+  if (bumpTotalCols > 0 && ccTotal > 0) blankColSet.add(COL_B2);
+  const isBlankCol = (i: number) => blankColSet.has(i);
 
   ws2.columns = Array.from({ length: TOTAL }, (_, i) => ({
     width: i === 0 ? 34
-         : blankCols.has(i) ? 2
+         : isBlankCol(i) ? 2
          : i < nM ? 16
          : 14,
   }));
 
   // ── Color palette (ARGB) ─────────────────────────────────────────────────
+  // Tenant Info: blue | Bumps: green | Current Charges: orange
   const PAL = {
     ti1: 'FF1F3864', ti2: 'FF2E75B6', ti3: 'FF9DC3E6', ti4: 'FFDEEAF1',
-    cc1: 'FF4A235A', cc2: 'FF7D3C98', cc3: 'FFBB8FCE', cc4: 'FFF4ECF7',
-    rb1: 'FF1E4620', rb2: 'FF548235', rb3: 'FFA9D18E', rb4: 'FFE2EFDA',
-    ac1: 'FF833C00', ac2: 'FFC55A11', ac3: 'FFF4B183', ac4: 'FFFCE4D6',
+    bp1: 'FF1E4620', bp2: 'FF548235', bp3: 'FFA9D18E', bp4: 'FFE2EFDA',
+    cc1: 'FF833C00', cc2: 'FFC55A11', cc3: 'FFF4B183', cc4: 'FFFCE4D6',
     blank: 'FF303030',
     white: 'FFFFFFFF', dark: 'FF1A1A1A',
     rowOdd: 'FFFFFFFF', rowEven: 'FFF5F7FA',
     borderColor: 'FFB8C4CE',
   };
 
-  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.cc1, PAL.cc2, PAL.rb1, PAL.rb2, PAL.ac1, PAL.ac2, PAL.blank]);
+  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.bp1, PAL.bp2, PAL.cc1, PAL.cc2, PAL.blank]);
 
   const mkFill = (argb: string): ExcelJS.Fill =>
     ({ type: 'pattern', pattern: 'solid', fgColor: { argb } } as ExcelJS.Fill);
@@ -787,12 +785,15 @@ async function downloadXLSX(
     return { top: side, left: side, bottom: side, right: side };
   };
 
-  const colSection = (ci: number): 'tenant' | 'cc' | 'rb' | 'ac' | 'blank' => {
+  const bumpRangeStart = bumpStarts.length > 0 ? bumpStarts[0] : -1;
+  const bumpRangeEnd = bumpRangeStart >= 0 ? bumpRangeStart + bumpTotalCols : -1;
+
+  const colSection = (ci: number): 'tenant' | 'at' | 'bp' | 'cc' | 'blank' => {
     if (ci < nM) return 'tenant';
-    if (blankCols.has(ci)) return 'blank';
+    if (isBlankCol(ci)) return 'blank';
+    if (atTotal > 0 && ci >= COL_AT && ci < COL_AT + atTotal) return 'at';
+    if (bumpTotalCols > 0 && ci >= bumpRangeStart && ci < bumpRangeEnd) return 'bp';
     if (ccTotal > 0 && ci >= COL_CC && ci < COL_CC + ccTotal) return 'cc';
-    if (rbTotal > 0 && ci >= COL_RB && ci < COL_RB + rbTotal) return 'rb';
-    if (acTotal > 0 && ci >= COL_AC && ci < COL_AC + acTotal) return 'ac';
     return 'blank';
   };
 
@@ -801,9 +802,9 @@ async function downloadXLSX(
     if (s === 'blank') return PAL.blank;
     const map = {
       tenant: [PAL.ti1, PAL.ti2, PAL.ti3, PAL.ti4],
+      at:     [PAL.cc1, PAL.cc2, PAL.cc3, PAL.cc4],
+      bp:     [PAL.bp1, PAL.bp2, PAL.bp3, PAL.bp4],
       cc:     [PAL.cc1, PAL.cc2, PAL.cc3, PAL.cc4],
-      rb:     [PAL.rb1, PAL.rb2, PAL.rb3, PAL.rb4],
-      ac:     [PAL.ac1, PAL.ac2, PAL.ac3, PAL.ac4],
     } as const;
     return map[s][level - 1];
   };
