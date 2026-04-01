@@ -11,12 +11,13 @@ type Cell = string | number | Date | null;
 
 function fmt(v: Cell): string {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  if (v instanceof Date) {
+    const m = v.getMonth() + 1;
+    const d = v.getDate();
+    const y = v.getFullYear();
+    return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`;
+  }
   if (typeof v === 'number') {
-    if (v > 20000 && v < 60000) {
-      const d = excelDateToJS(v);
-      if (d) return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-    }
     if (Math.abs(v) >= 1) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     if (v !== 0) return v.toLocaleString('en-US', { maximumFractionDigits: 4 });
     return '0.00';
@@ -24,12 +25,6 @@ function fmt(v: Cell): string {
   return String(v).trim();
 }
 
-function excelDateToJS(serial: number): Date | null {
-  if (serial < 1) return null;
-  const d = new Date(1899, 11, 30);
-  d.setDate(d.getDate() + serial);
-  return isNaN(d.getTime()) ? null : d;
-}
 
 function colToRef(col: number, row: number): string {
   let letter = '';
