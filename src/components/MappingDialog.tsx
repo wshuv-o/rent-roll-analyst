@@ -32,11 +32,55 @@ export function pairKey(charge: string, chargeType: string): string {
   return `${charge}\x00${chargeType}`;
 }
 
-function autoSuggest(chargeType: string, categories: string[]): string {
-  const ct = chargeType.toLowerCase();
-  if (ct.includes('rent')) return categories.find(c => /^rent$/i.test(c))     ?? categories[0] ?? '';
-  if (ct.includes('cam'))  return categories.find(c => /^opex$/i.test(c))     ?? categories[0] ?? '';
-  return                          categories.find(c => /^excluded$/i.test(c)) ?? categories[0] ?? '';
+// Known (code, leaseType) → mapping. Code is normalised to lower-case, trimmed,
+// leading "* " stripped.  Lookup order: exact (code,type) → code-only → type fallback.
+const KNOWN_MAPPINGS: Record<string, string> = {
+  // Rent-type
+  'rnt\x00rent':     'Rent',
+  'tir\x00rent':     'Rent',
+  'grcam\x00rent':   'Rent',
+  'cpx\x00rent':     'Rent',
+  // Rent-type excluded
+  'frea\x00rent':    'Excluded',
+  'fre\x00rent':     'Excluded',
+  // Misc → Excluded
+  'sdr\x00misc':     'Excluded',
+  'pypl\x00misc':    'Excluded',
+  'dtpo\x00misc':    'Excluded',
+  'bad_rnt\x00misc': 'Excluded',
+  'bad_cam\x00misc': 'Excluded',
+  // CAM → specific categories
+  'uti\x00cam':      'Utility',
+  'ptx\x00cam':      'Tax',
+  'ope\x00cam':      'Opex',
+  'mng\x00cam':      'Management',
+  'ins\x00cam':      'Insurance',
+  'elec\x00cam':     'Utility',
+  'capimp\x00cam':   'Opex',
+  'capcam\x00cam':   'Opex',
+};
+
+function autoSuggest(charge: string, chargeType: string, categories: string[]): string {
+  // Normalise: lowercase, trim, strip leading "* "
+  const code = charge.toLowerCase().trim().replace(/^\*\s*/, '');
+  const type = chargeType.toLowerCase().trim();
+
+  // 1. Exact (code, type) lookup
+  const exact = KNOWN_MAPPINGS[`${code}\x00${type}`];
+  if (exact && categories.includes(exact)) return exact;
+
+  // 2. Code-only: try every entry whose code part matches
+  for (const [k, v] of Object.entries(KNOWN_MAPPINGS)) {
+    if (k.split('\x00')[0] === code && categories.includes(v)) return v;
+  }
+
+  // 3. Fallback by chargeType
+  if (type.includes('rent')) return categories.find(c => /^rent$/i.test(c)) ?? '';
+  if (type.includes('cam'))  return categories.find(c => /^opex$/i.test(c)) ?? '';
+  if (type.includes('misc')) return categories.find(c => /^excluded$/i.test(c)) ?? '';
+
+  // 4. Unknown — leave blank
+  return '';
 }
 
 const cc = (...parts: (string | false | undefined | null)[]) => parts.filter(Boolean).join(' ');
@@ -72,7 +116,7 @@ export function MappingDialog({ uniquePairs, onClose, onExport }: MappingDialogP
   const [mappings, setMappings] = useState<Record<string, string>>(() => {
     const m: Record<string, string> = {};
     for (const p of uniquePairs) {
-      m[pairKey(p.charge, p.chargeType)] = autoSuggest(p.chargeType, DEFAULT_CATEGORIES);
+      m[pairKey(p.charge, p.chargeType)] = autoSuggest(p.charge, p.chargeType, DEFAULT_CATEGORIES);
     }
     return m;
   });

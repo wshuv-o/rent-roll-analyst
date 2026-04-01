@@ -555,7 +555,7 @@ async function downloadXLSX(
   // ── Section A: Bumps per mapping category ──────────────────────────────────
   // For each non-Excluded category, compute bumps (date + PSF) like rent bumps.
   // "Rent" bumps come first, then other categories in order.
-  const bumpCategories = categories.filter(c => c !== 'Excluded');
+  const bumpCategories = categories //.filter(c => c !== 'Excluded');
 
   type BumpEntry = { dateStr: string; psf: number | null };
   // bumpsByTenant[catIdx][tenantIdx] = BumpEntry[]
@@ -605,12 +605,19 @@ async function downloadXLSX(
     }
   }
   const MAP_ORD = ['Rent', 'Opex', 'Utility', 'Management', 'Insurance', 'Tax', 'Excluded'];
+  const starCount = (c: string) => { const m = c.match(/^\*+/); return m ? m[0].length : 0; };
   allCodes.sort((a, b) => {
+    // 1. Star count ascending (no stars first, then *, then **)
+    const sa = starCount(a), sb = starCount(b);
+    if (sa !== sb) return sa - sb;
+    // 2. Mapping category order
     const ia = MAP_ORD.indexOf(codeCategory(a));
     const ib = MAP_ORD.indexOf(codeCategory(b));
     const oa = ia < 0 ? 999 : ia;
     const ob = ib < 0 ? 999 : ib;
-    return oa !== ob ? oa - ob : a.localeCompare(b);
+    if (oa !== ob) return oa - ob;
+    // 3. Alphabetical
+    return a.localeCompare(b);
   });
 
   // ── Column layout ─────────────────────────────────────────────────────────
@@ -672,19 +679,12 @@ async function downloadXLSX(
   for (let i = 0; i < allCodes.length; i++) {
     const code = allCodes[i];
     const catLabel = codeCategory(code) || code;
-    h2[COL_CC + i] = code;
-    h3[COL_CC + i] = catLabel;
-    h4[COL_CC + i] = 'PSF';
+    h2[COL_CC + i] = catLabel;
+    h3[COL_CC + i] = code;
+    h4[COL_CC + i] = 'Current';
   }
 
   // ── Build data rows ───────────────────────────────────────────────────────
-  const rate = (r: FlatRow, base: FlatRow): number | null => {
-    const apa = toNumber(r.annualPerArea);
-    if (apa !== null) return apa;
-    const ann = toNumber(r.annual); const area = toNumber(base.area);
-    return ann !== null && area ? ann / area : null;
-  };
-
   const dateMainCols = new Set(
     (['leaseFrom', 'leaseTo'] as (keyof FlatRow)[]).map(k => MAIN_KEYS.indexOf(k)).filter(i => i >= 0)
   );
@@ -714,7 +714,7 @@ async function downloadXLSX(
           sum += toNumber(r.annual) ?? 0;
         }
       }
-      row[COL_AT + ci] = sum || null;
+      row[COL_AT + ci] = sum;
     }
 
     // Bumps per category
@@ -727,16 +727,13 @@ async function downloadXLSX(
       }
     }
 
-    // Current Charges: PSF of charge code row active on rent roll date
+    // Current Charges: annual amount of charge code row active on rent roll date
     for (let i = 0; i < allCodes.length; i++) {
       const code = allCodes[i];
-      // Find the row for this code that is active on the rent roll date
       const activeRow = all.find(r =>
         String(r.charge ?? '').trim() === code && isActiveOn(r, rrDateNum)
       );
-      if (activeRow) {
-        row[COL_CC + i] = rate(activeRow, base);
-      }
+      row[COL_CC + i] = activeRow ? (toNumber(activeRow.annual) ?? 0) : 0;
     }
 
     return row;
