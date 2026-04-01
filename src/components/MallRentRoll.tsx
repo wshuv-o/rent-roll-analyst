@@ -25,12 +25,6 @@ function fmt(v: Cell): string {
   return String(v).trim();
 }
 
-function excelDateToJS(serial: number): Date | null {
-  if (serial < 1) return null;
-  const d = new Date(1899, 11, 30);
-  d.setDate(d.getDate() + serial);
-  return isNaN(d.getTime()) ? null : d;
-}
 
 function colToRef(col: number, row: number): string {
   let letter = '';
