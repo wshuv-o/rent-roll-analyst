@@ -526,6 +526,13 @@ async function downloadXLSX(
   // ── Helpers ───────────────────────────────────────────────────────────────
   const dNum = (v: Cell): number => dateSortValue(v);
 
+  // 0-based index → Excel column letter (0→A, 25→Z, 26→AA)
+  const CL = (i: number): string => {
+    let n = i + 1, s = '';
+    while (n > 0) { n--; s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26); }
+    return s;
+  };
+
   // Build a mapping from charge code → category using the (code, type) pair key
   const codeType: Record<string, string> = {};
   for (const { rs, cs } of tenants) {
@@ -621,32 +628,74 @@ async function downloadXLSX(
   });
 
   // ── Column layout ─────────────────────────────────────────────────────────
-  // [Tenant Info] [Annual Totals per cat] [blank] [Bumps per cat] [blank] [Current Charges per code]
-  const atTotal = bumpCategories.length; // 1 col per mapping category (annual total)
+  // [Tenant Info] [TotalRentsCC] [VarInputRents]
+  // [Annual Totals] [AnnualRec] [TotalRecCC] [VarInputRec]
+  // [blank] [StepDate] [StepRent] [Var%] [Bumps per cat] [blank] [Current Charges]
+  const atTotal = bumpCategories.length;
   const bumpTotalCols = bumpCategories.reduce((s, _, ci) => s + maxBumpsPerCat[ci] * 2, 0);
-  const ccTotal = allCodes.length; // 1 col per charge code (PSF only)
+  const ccTotal = allCodes.length;
+  const rentCatIdx = bumpCategories.indexOf('Rent');
 
   let col = nM;
-  // Annual Totals section
+
+  // After Security Deposit: 2 formula cols
+  const COL_TRCC  = col++;  // Total Rents from Charge codes
+  const COL_VRENT = col++;  // Var with Input Rents
+
+  // Annual Totals (1 col per mapping category)
   const COL_AT = col; col += atTotal;
-  const COL_B1 = atTotal > 0 && bumpTotalCols > 0 ? col++ : col;
+
+  // After Annual Totals: 3 formula cols
+  const COL_AREC = col++;   // Annual Recovery
+  const COL_TREC = col++;   // Total Rec from Charge codes
+  const COL_VREC = col++;   // Var with Input Rec
+
+  // Blank separator
+  const COL_B1 = col++;
+
+  // Step Date / Step Rent / Var %
+  const COL_SD = col++;
+  const COL_SR = col++;
+  const COL_VP = col++;
+
   // Bump sections (one after another)
   const bumpStarts: number[] = [];
   for (let ci = 0; ci < bumpCategories.length; ci++) {
     bumpStarts.push(col);
     col += maxBumpsPerCat[ci] * 2;
   }
+
+  // Blank separator
   const COL_B2 = bumpTotalCols > 0 && ccTotal > 0 ? col++ : col;
+
+  // Current Charges (1 col per charge code)
   const COL_CC = col; col += ccTotal;
   const TOTAL = col;
+
+  // Key column indices for formulas
+  const annualRentColIdx = MAIN_KEYS.indexOf('annualRent');
+  const areaColIdx = MAIN_KEYS.indexOf('area');
+
+  // Step date = rent roll date + 365 days
+  const stepDateMs = rrDateNum ? rrDateNum + 365 * 24 * 60 * 60 * 1000 : 0;
+  const stepDateVal = stepDateMs ? new Date(stepDateMs) : null;
+
+  // AT columns for recovery (not Rent, not Excluded)
+  const recAtCols = bumpCategories
+    .map((cat, ci) => ({ cat, col: COL_AT + ci }))
+    .filter(x => x.cat !== 'Rent' && x.cat !== 'Excluded')
+    .map(x => x.col);
 
   // ── Build 4 header rows ───────────────────────────────────────────────────
   const mk = (): X[] => Array<X>(TOTAL).fill(null);
   const h1 = mk(); const h2 = mk(); const h3 = mk(); const h4 = mk();
 
-  // Row 1: section labels
+  // Tenant Info section
   for (let i = 0; i < nM; i++) h1[i] = 'Tenant Info';
   for (let i = 0; i < nM; i++) h4[i] = MAIN_HDRS[i];
+  h1[COL_TRCC] = 'Tenant Info'; h1[COL_VRENT] = 'Tenant Info';
+  h4[COL_TRCC] = 'Total Rents from CC';
+  h4[COL_VRENT] = 'Var with Input Rents';
 
   // Annual Totals headers
   if (atTotal > 0) {
@@ -657,6 +706,17 @@ async function downloadXLSX(
     h3[COL_AT + i] = 'Annual';
     h4[COL_AT + i] = bumpCategories[i];
   }
+  h1[COL_AREC] = 'Annual Totals'; h1[COL_TREC] = 'Annual Totals'; h1[COL_VREC] = 'Annual Totals';
+  h4[COL_AREC] = 'Annual Recovery';
+  h4[COL_TREC] = 'Total Rec from CC';
+  h4[COL_VREC] = 'Var with Input Rec';
+
+  // Step Date / Step Rent / Var % headers
+  h1[COL_SD] = 'Rent Bumps'; h1[COL_SR] = 'Rent Bumps'; h1[COL_VP] = 'Rent Bumps';
+  if (stepDateVal) h2[COL_SD] = stepDateVal;
+  h4[COL_SD] = 'Step Date';
+  h4[COL_SR] = 'Step Rent';
+  h4[COL_VP] = 'Var %';
 
   // Bump section headers
   for (let ci = 0; ci < bumpCategories.length; ci++) {
@@ -682,6 +742,71 @@ async function downloadXLSX(
     h2[COL_CC + i] = catLabel;
     h3[COL_CC + i] = code;
     h4[COL_CC + i] = 'Current';
+  }
+
+  // ── Formula column definitions ────────────────────────────────────────────
+  // CC section column range (Excel letters)
+  const ccFirstL = CL(COL_CC);
+  const ccLastL  = ccTotal > 0 ? CL(COL_CC + ccTotal - 1) : ccFirstL;
+  const annRentL = CL(annualRentColIdx);
+  const areaL    = CL(areaColIdx);
+  const sdL      = CL(COL_SD);
+
+  // Rent bump section range
+  const rbFirstL = rentCatIdx >= 0 && maxBumpsPerCat[rentCatIdx] > 0
+    ? CL(bumpStarts[rentCatIdx]) : '';
+  const rbLastL = rentCatIdx >= 0 && maxBumpsPerCat[rentCatIdx] > 0
+    ? CL(bumpStarts[rentCatIdx] + maxBumpsPerCat[rentCatIdx] * 2 - 1) : '';
+
+  type FormulaCol = { col: number; formula: (row: number) => string };
+  const formulaCols: FormulaCol[] = [];
+
+  if (ccTotal > 0) {
+    // Total Rents from CC: =SUMIF(mapping_row,"Rent",data_row)
+    formulaCols.push({
+      col: COL_TRCC,
+      formula: (r) => `SUMIF($${ccFirstL}$2:$${ccLastL}$2,"Rent",${ccFirstL}${r}:${ccLastL}${r})`,
+    });
+    // Var with Input Rents: = Annual Rent - Total Rents from CC
+    formulaCols.push({
+      col: COL_VRENT,
+      formula: (r) => `${annRentL}${r}-${CL(COL_TRCC)}${r}`,
+    });
+    // Total Rec from CC: =SUMIFS(data,"<>Rent","<>Excluded")
+    formulaCols.push({
+      col: COL_TREC,
+      formula: (r) => `SUMIFS(${ccFirstL}${r}:${ccLastL}${r},$${ccFirstL}$2:$${ccLastL}$2,"<>Rent",$${ccFirstL}$2:$${ccLastL}$2,"<>Excluded")`,
+    });
+  }
+
+  // Annual Recovery: =SUM(recovery AT columns)
+  if (recAtCols.length > 0) {
+    formulaCols.push({
+      col: COL_AREC,
+      formula: (r) => recAtCols.map(c => `${CL(c)}${r}`).join('+'),
+    });
+  }
+
+  // Var with Input Rec: = Total Rec from CC - Annual Recovery
+  formulaCols.push({
+    col: COL_VREC,
+    formula: (r) => `${CL(COL_TREC)}${r}-${CL(COL_AREC)}${r}`,
+  });
+
+  // Step Date, Step Rent, Var % (only if Rent bumps exist)
+  if (rbFirstL && rbLastL) {
+    formulaCols.push({
+      col: COL_SD,
+      formula: (r) => `IF(OR(${rbFirstL}${r}="",${rbFirstL}${r}>$${sdL}$2),"",MAX(IF(${rbFirstL}${r}:${rbLastL}${r}<=$${sdL}$2,${rbFirstL}${r}:${rbLastL}${r},0)))`,
+    });
+    formulaCols.push({
+      col: COL_SR,
+      formula: (r) => `IF(${sdL}${r}="","",OFFSET(${rbFirstL}${r},0,MATCH(${sdL}${r},${rbFirstL}${r}:${rbLastL}${r},0)))`,
+    });
+    formulaCols.push({
+      col: COL_VP,
+      formula: (r) => `IF(${CL(COL_SR)}${r}="","",IFERROR((${CL(COL_SR)}${r}-${annRentL}${r}/${areaL}${r})/(${annRentL}${r}/${areaL}${r}),0))`,
+    });
   }
 
   // ── Build data rows ───────────────────────────────────────────────────────
@@ -717,12 +842,13 @@ async function downloadXLSX(
       row[COL_AT + ci] = sum;
     }
 
-    // Bumps per category
+    // Bumps per category (use Date objects for date cells so formulas can compare)
     for (let ci = 0; ci < bumpCategories.length; ci++) {
       const bumps = bumpsByTenant[ci][ti];
       const s = bumpStarts[ci];
       for (let p = 0; p < bumps.length; p++) {
-        row[s + p * 2] = bumps[p].dateStr;
+        const d = bumps[p].dateStr ? new Date(bumps[p].dateStr) : null;
+        row[s + p * 2] = d;
         row[s + p * 2 + 1] = bumps[p].psf;
       }
     }
@@ -748,9 +874,7 @@ async function downloadXLSX(
   });
 
   // Column widths
-  const blankColSet = new Set<number>();
-  if (atTotal > 0 && bumpTotalCols > 0) blankColSet.add(COL_B1);
-  if (bumpTotalCols > 0 && ccTotal > 0) blankColSet.add(COL_B2);
+  const blankColSet = new Set([COL_B1, COL_B2]);
   const isBlankCol = (i: number) => blankColSet.has(i);
 
   ws2.columns = Array.from({ length: TOTAL }, (_, i) => ({
@@ -761,7 +885,6 @@ async function downloadXLSX(
   }));
 
   // ── Color palette (ARGB) ─────────────────────────────────────────────────
-  // Tenant Info: blue | Bumps: green | Current Charges: orange
   const PAL = {
     ti1: 'FF1F3864', ti2: 'FF2E75B6', ti3: 'FF9DC3E6', ti4: 'FFDEEAF1',
     bp1: 'FF1E4620', bp2: 'FF548235', bp3: 'FFA9D18E', bp4: 'FFE2EFDA',
@@ -785,10 +908,16 @@ async function downloadXLSX(
   const bumpRangeStart = bumpStarts.length > 0 ? bumpStarts[0] : -1;
   const bumpRangeEnd = bumpRangeStart >= 0 ? bumpRangeStart + bumpTotalCols : -1;
 
+  // Classify columns into colour sections
+  const tiExtras = new Set([COL_TRCC, COL_VRENT]);
+  const atExtras = new Set([COL_AREC, COL_TREC, COL_VREC]);
+  const stepCols = new Set([COL_SD, COL_SR, COL_VP]);
+
   const colSection = (ci: number): 'tenant' | 'at' | 'bp' | 'cc' | 'blank' => {
-    if (ci < nM) return 'tenant';
+    if (ci < nM || tiExtras.has(ci)) return 'tenant';
     if (isBlankCol(ci)) return 'blank';
-    if (atTotal > 0 && ci >= COL_AT && ci < COL_AT + atTotal) return 'at';
+    if ((atTotal > 0 && ci >= COL_AT && ci < COL_AT + atTotal) || atExtras.has(ci)) return 'at';
+    if (stepCols.has(ci)) return 'bp';
     if (bumpTotalCols > 0 && ci >= bumpRangeStart && ci < bumpRangeEnd) return 'bp';
     if (ccTotal > 0 && ci >= COL_CC && ci < COL_CC + ccTotal) return 'cc';
     return 'blank';
@@ -829,20 +958,38 @@ async function downloadXLSX(
     });
   });
 
+  // Build lookup of formula col → formula fn for quick access
+  const formulaMap = new Map(formulaCols.map(fc => [fc.col, fc.formula]));
+
   dataRows.forEach((dataRow, ri) => {
     const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
+    const exRowNum = ri + 5; // 4 header rows + 1-based
     exRow.height = 15;
     const rowBg = ri % 2 === 0 ? PAL.rowOdd : PAL.rowEven;
+
+    // Inject formulas for formula columns
+    for (const fc of formulaCols) {
+      const cell = exRow.getCell(fc.col + 1); // 1-based
+      cell.value = { formula: fc.formula(exRowNum) } as ExcelJS.CellFormulaValue;
+    }
+
     exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
       const ci = colIdx - 1;
       cell.fill = mkFill(rowBg);
       cell.font = { size: 10, name: 'Calibri', color: { argb: PAL.dark } };
       cell.border = mkBorder('hair');
 
-      if (dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'))) {
-        if (typeof cell.value === 'number') cell.numFmt = 'mm/dd/yyyy';
+      const isFormula = formulaMap.has(ci);
+      const isDateCol = dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'));
+      const isVarPct = ci === COL_VP;
+
+      if (isDateCol) {
+        cell.numFmt = 'mm/dd/yyyy';
         cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      } else if (typeof cell.value === 'number') {
+      } else if (isVarPct) {
+        cell.numFmt = '0.00%';
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else if (isFormula || typeof cell.value === 'number' || (cell.value && typeof cell.value === 'object' && 'formula' in cell.value)) {
         cell.numFmt = '#,##0.00';
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
       } else {
