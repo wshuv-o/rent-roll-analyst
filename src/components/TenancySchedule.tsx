@@ -780,7 +780,7 @@ async function downloadXLSX(
     // Total Rents from CC: =SUMIF(mapping_row,"Rent",data_row)
     formulaCols.push({
       col: COL_TRCC,
-      formula: (r) => `SUMIF($${ccFirstL}$2:$${ccLastL}$2,"Rent",${ccFirstL}${r}:${ccLastL}${r})`,
+      formula: (r) => `_xlfn.SUMIF($${ccFirstL}$2:$${ccLastL}$2,"Rent",${ccFirstL}${r}:${ccLastL}${r})`,
     });
     // Var with Input Rents: = Annual Rent - Total Rents from CC
     formulaCols.push({
@@ -790,7 +790,7 @@ async function downloadXLSX(
     // Total Rec from CC: =SUMIFS(data,"<>Rent","<>Excluded")
     formulaCols.push({
       col: COL_TREC,
-      formula: (r) => `SUMIFS(${ccFirstL}${r}:${ccLastL}${r},$${ccFirstL}$2:$${ccLastL}$2,"<>Rent",$${ccFirstL}$2:$${ccLastL}$2,"<>Excluded")`,
+      formula: (r) => `_xlfn.SUMIFS(${ccFirstL}${r}:${ccLastL}${r},$${ccFirstL}$2:$${ccLastL}$2,"<>Rent",$${ccFirstL}$2:$${ccLastL}$2,"<>Excluded")`,
     });
   }
 
@@ -812,15 +812,15 @@ async function downloadXLSX(
   if (rbFirstL && rbLastL) {
     formulaCols.push({
       col: COL_SD,
-      formula: (r) => `IF(OR(${rbFirstL}${r}="",${rbFirstL}${r}>$${sdL}$2),"",MAX(IF(${rbFirstL}${r}:${rbLastL}${r}<=$${sdL}$2,${rbFirstL}${r}:${rbLastL}${r},0)))`,
+      formula: (r) => `_xlfn.IF(_xlfn.OR(${rbFirstL}${r}="",${rbFirstL}${r}>$${sdL}$2),"",_xlfn.MAXIFS(${rbFirstL}${r}:${rbLastL}${r},${rbFirstL}${r}:${rbLastL}${r},"<="&$${sdL}$2))`,
     });
     formulaCols.push({
       col: COL_SR,
-      formula: (r) => `IF(${sdL}${r}="","",OFFSET(${rbFirstL}${r},0,MATCH(${sdL}${r},${rbFirstL}${r}:${rbLastL}${r},0)))`,
+      formula: (r) => `_xlfn.IF(${sdL}${r}="","",OFFSET(${rbFirstL}${r},0,MATCH(${sdL}${r},${rbFirstL}${r}:${rbLastL}${r},0)))`,
     });
     formulaCols.push({
       col: COL_VP,
-      formula: (r) => `IF(${CL(COL_SR)}${r}="","",IFERROR((${CL(COL_SR)}${r}-${annRentL}${r}/${areaL}${r})/(${annRentL}${r}/${areaL}${r}),0))`,
+      formula: (r) => `_xlfn.IF(${CL(COL_SR)}${r}="","",_xlfn.IFERROR((${CL(COL_SR)}${r}-${annRentL}${r}/${areaL}${r})/(${annRentL}${r}/${areaL}${r}),0))`,
     });
   }
 
