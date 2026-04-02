@@ -712,16 +712,10 @@ async function downloadXLSX(
   h4[COL_TRCC] = 'Total Rents from CC';
   h4[COL_VRENT] = 'Var with Input Rents';
 
-  // Annual Totals headers
-  if (atTotal > 0) {
-    for (let i = COL_AT; i < COL_AT + atTotal; i++) h1[i] = 'Annual Totals';
-  }
+  // Annual Totals headers (rows 1-3 blank, row 4 has category names)
   for (let i = 0; i < bumpCategories.length; i++) {
-    h2[COL_AT + i] = bumpCategories[i];
-    h3[COL_AT + i] = 'Annual';
     h4[COL_AT + i] = bumpCategories[i];
   }
-  h1[COL_AREC] = 'Annual Totals'; h1[COL_TREC] = 'Annual Totals'; h1[COL_VREC] = 'Annual Totals';
   h4[COL_AREC] = 'Annual Recovery';
   h4[COL_TREC] = 'Total Rec from CC';
   h4[COL_VREC] = 'Var with Input Rec';
@@ -755,8 +749,8 @@ async function downloadXLSX(
     const code = allCodes[i];
     const catLabel = codeCategory(code) || code;
     h2[COL_CC + i] = catLabel;
-    h3[COL_CC + i] = code;
-    h4[COL_CC + i] = 'Current';
+    h3[COL_CC + i] = 'Current';
+    h4[COL_CC + i] = code;
   }
 
   // ── Formula column definitions ────────────────────────────────────────────
@@ -925,8 +919,6 @@ async function downloadXLSX(
     borderColor: 'FFB8C4CE',
   };
 
-  const DARK_FILLS = new Set([PAL.ti1, PAL.ti2, PAL.bp1, PAL.bp2, PAL.cc1, PAL.cc2, PAL.blank]);
-
   const mkFill = (argb: string): ExcelJS.Fill =>
     ({ type: 'pattern', pattern: 'solid', fgColor: { argb } } as ExcelJS.Fill);
 
@@ -953,39 +945,92 @@ async function downloadXLSX(
     return 'blank';
   };
 
-  const hdrFill = (ci: number, level: 1 | 2 | 3 | 4): string => {
-    const s = colSection(ci);
-    if (s === 'blank') return PAL.blank;
-    const map = {
-      tenant: [PAL.ti1, PAL.ti2, PAL.ti3, PAL.ti4],
-      at:     [PAL.cc1, PAL.cc2, PAL.cc3, PAL.cc4],
-      bp:     [PAL.bp1, PAL.bp2, PAL.bp3, PAL.bp4],
-      cc:     [PAL.cc1, PAL.cc2, PAL.cc3, PAL.cc4],
-    } as const;
-    return map[s][level - 1];
-  };
+  // ── Add header rows ────────────────────────────────────────────────────────
+  const HDR_BG = 'FF002060'; // rgb(0,32,96)
 
-  // ── Add 4 header rows ─────────────────────────────────────────────────────
-  const HDR_HEIGHTS = [22, 18, 18, 16];
-  const hdrs = [h1, h2, h3, h4];
+  // Columns that should be blank in rows 1-3 (Tenant Info + Annual Totals sections)
+  const blankH123 = new Set<number>();
+  for (let i = 0; i < nM; i++) blankH123.add(i);
+  blankH123.add(COL_TRCC); blankH123.add(COL_VRENT);
+  for (let i = COL_AT; i < COL_AT + atTotal; i++) blankH123.add(i);
+  blankH123.add(COL_AREC); blankH123.add(COL_TREC); blankH123.add(COL_VREC);
 
-  hdrs.forEach((hdr, hi) => {
-    const level = (hi + 1) as 1 | 2 | 3 | 4;
+  // Rows 1-3: styled for Rent Bumps / Current Charges, blank for Tenant Info / Annual Totals
+  const HDR_HEIGHTS = [22, 18, 18];
+  const hdrs123 = [h1, h2, h3];
+  hdrs123.forEach((hdr, hi) => {
+    const level = (hi + 1) as 1 | 2 | 3;
     const exRow = ws2.addRow(hdr as (string | number | Date | null)[]);
     exRow.height = HDR_HEIGHTS[hi];
     exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
       const ci = colIdx - 1;
-      const bg = hdrFill(ci, level);
-      cell.fill = mkFill(bg);
+      if (blankH123.has(ci)) {
+        cell.value = null;
+        return;
+      }
       cell.font = {
         bold: true,
-        color: { argb: DARK_FILLS.has(bg) ? PAL.white : PAL.dark },
         size: level === 1 ? 11 : 10,
         name: 'Calibri',
       };
-      cell.border = mkBorder(level === 4 ? 'medium' : 'thin');
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
     });
+  });
+
+  // Write Rent Roll Date label + value in row 2
+  const rrRow = ws2.getRow(2);
+  const rrLabelCell = rrRow.getCell(3); // column C
+  rrLabelCell.value = 'Rent Roll Date:';
+  rrLabelCell.font = { bold: true, size: 10, name: 'Calibri' };
+  const rrDateCell = rrRow.getCell(4); // column D
+  if (rentRollDate) {
+    const rrSerial = toExcelSerial(rentRollDate);
+    rrDateCell.value = rrSerial;
+    rrDateCell.numFmt = 'mm/dd/yyyy';
+  }
+  rrDateCell.font = { bold: true, size: 10, name: 'Calibri' };
+
+  // Row 4: column headers with per-section background colors
+  const AT_BG = 'FF4F6228';   // rgb(79,98,40) — Annual Totals
+  const RED_BG = 'FFC00000';  // rgb(192,0,0) — Total Rec from CC, Var with Input Rec
+  const redCols = new Set([COL_TREC, COL_VREC]);
+  const excludedCol = bumpCategories.indexOf('Excluded');
+  const excludedColIdx = excludedCol >= 0 ? COL_AT + excludedCol : -1;
+
+  const CC_BG = 'FF0F243E';    // rgb(15,36,62) — Current Charges row 4
+  const CC_FT = 'FFFFFF00';    // rgb(255,255,0) — yellow text for Current Charges
+
+  const exHdrRow = ws2.addRow(h4 as (string | number | Date | null)[]);
+  exHdrRow.height = 16;
+  exHdrRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
+    const ci = colIdx - 1;
+    const section = colSection(ci);
+
+    // Determine background and font color for row 4
+    let bg: string;
+    let fontColor: string;
+    if (section === 'cc') {
+      bg = CC_BG;
+      fontColor = CC_FT;
+    } else if (section === 'at' || atExtras.has(ci)) {
+      if (ci === excludedColIdx) {
+        bg = PAL.white;
+        fontColor = PAL.dark;
+      } else if (redCols.has(ci)) {
+        bg = RED_BG;
+        fontColor = PAL.white;
+      } else {
+        bg = AT_BG;
+        fontColor = PAL.white;
+      }
+    } else {
+      bg = HDR_BG;
+      fontColor = PAL.white;
+    }
+
+    cell.fill = mkFill(bg);
+    cell.font = { bold: true, color: { argb: fontColor }, size: 10, name: 'Calibri' };
+    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
   });
 
   // Build lookup of formula col → formula fn for quick access
@@ -995,7 +1040,6 @@ async function downloadXLSX(
     const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
     const exRowNum = ri + 5; // 4 header rows + 1-based
     exRow.height = 15;
-    const rowBg = ri % 2 === 0 ? PAL.rowOdd : PAL.rowEven;
 
     // Inject formulas for formula columns
     for (const fc of formulaCols) {
@@ -1005,9 +1049,7 @@ async function downloadXLSX(
 
     exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
       const ci = colIdx - 1;
-      cell.fill = mkFill(rowBg);
       cell.font = { size: 10, name: 'Calibri', color: { argb: PAL.dark } };
-      cell.border = mkBorder('hair');
 
       const isFormula = formulaMap.has(ci);
       const isDateCol = dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'));
