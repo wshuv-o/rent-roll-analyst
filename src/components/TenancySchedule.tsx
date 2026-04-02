@@ -834,8 +834,10 @@ async function downloadXLSX(
     const row = mk();
 
     // Tenant info
+    const all = allRows(t);
     for (let i = 0; i < nM; i++) {
-      const v = base[MAIN_KEYS[i]] as Cell;
+      const key = MAIN_KEYS[i];
+      const v = base[key] as Cell;
       if (dateMainCols.has(i)) {
         row[i] = toExcelSerial(v);
       } else {
@@ -843,8 +845,22 @@ async function downloadXLSX(
       }
     }
 
+    // Override Annual Rent & Monthly Rent: sum from rent steps active on rent roll date
+    if (rrDateNum) {
+      let activeAnnual = 0;
+      for (const r of all) {
+        const code = String(r.charge ?? '').trim();
+        if (codeCategory(code) === 'Rent' && isActiveOn(r, rrDateNum)) {
+          activeAnnual += toNumber(r.annual) ?? 0;
+        }
+      }
+      const annualIdx = MAIN_KEYS.indexOf('annualRent');
+      const monthlyIdx = MAIN_KEYS.indexOf('monthlyRent');
+      if (annualIdx >= 0) row[annualIdx] = activeAnnual;
+      if (monthlyIdx >= 0) row[monthlyIdx] = activeAnnual / 12;
+    }
+
     // Annual Totals: sum annual by category for rows active on rent roll date
-    const all = allRows(t);
     for (let ci = 0; ci < bumpCategories.length; ci++) {
       const cat = bumpCategories[ci];
       let sum = 0;
