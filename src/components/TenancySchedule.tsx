@@ -53,6 +53,21 @@ type SubValues = Record<string, Cell>;
 const DATE_COL_KEYS = new Set<keyof FlatRow>(['leaseFrom', 'leaseTo', 'from', 'to']);
 const EXCEL_EPOCH_UTC = Date.UTC(1899, 11, 30);
 
+/** Convert a Date or date string (mm/dd/yyyy) to an Excel serial number, timezone-safe */
+function toExcelSerial(v: Cell): number | null {
+  if (v instanceof Date) {
+    const serial = Math.round((v.getTime() - EXCEL_EPOCH_UTC) / 86400000);
+    return serial > 0 ? serial : null;
+  }
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return Math.round(v);
+  const s = toDateString(v);
+  if (!s) return null;
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
+  return Math.round((ms - EXCEL_EPOCH_UTC) / 86400000);
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
@@ -676,9 +691,9 @@ async function downloadXLSX(
   const annualRentColIdx = MAIN_KEYS.indexOf('annualRent');
   const areaColIdx = MAIN_KEYS.indexOf('area');
 
-  // Step date = rent roll date + 365 days
+  // Step date = rent roll date + 365 days (as Excel serial number)
   const stepDateMs = rrDateNum ? rrDateNum + 365 * 24 * 60 * 60 * 1000 : 0;
-  const stepDateVal = stepDateMs ? new Date(stepDateMs) : null;
+  const stepDateSerial = stepDateMs ? Math.round((stepDateMs - EXCEL_EPOCH_UTC) / 86400000) : null;
 
   // AT columns for recovery (not Rent, not Excluded)
   const recAtCols = bumpCategories
@@ -713,7 +728,7 @@ async function downloadXLSX(
 
   // Step Date / Step Rent / Var % headers
   h1[COL_SD] = 'Rent Bumps'; h1[COL_SR] = 'Rent Bumps'; h1[COL_VP] = 'Rent Bumps';
-  if (stepDateVal) h2[COL_SD] = stepDateVal;
+  if (stepDateSerial) h2[COL_SD] = stepDateSerial;
   h4[COL_SD] = 'Step Date';
   h4[COL_SR] = 'Step Rent';
   h4[COL_VP] = 'Var %';
@@ -822,9 +837,9 @@ async function downloadXLSX(
     for (let i = 0; i < nM; i++) {
       const v = base[MAIN_KEYS[i]] as Cell;
       if (dateMainCols.has(i)) {
-        row[i] = toDateString(v);
+        row[i] = toExcelSerial(v);
       } else {
-        row[i] = v instanceof Date ? toDateString(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
+        row[i] = v instanceof Date ? toExcelSerial(v) : typeof v === 'number' ? v : (v as string | null) ?? null;
       }
     }
 
@@ -842,13 +857,12 @@ async function downloadXLSX(
       row[COL_AT + ci] = sum;
     }
 
-    // Bumps per category (use Date objects for date cells so formulas can compare)
+    // Bumps per category (write Excel serial numbers to avoid timezone issues)
     for (let ci = 0; ci < bumpCategories.length; ci++) {
       const bumps = bumpsByTenant[ci][ti];
       const s = bumpStarts[ci];
       for (let p = 0; p < bumps.length; p++) {
-        const d = bumps[p].dateStr ? new Date(bumps[p].dateStr) : null;
-        row[s + p * 2] = d;
+        row[s + p * 2] = bumps[p].dateStr ? toExcelSerial(bumps[p].dateStr) : null;
         row[s + p * 2 + 1] = bumps[p].psf;
       }
     }
@@ -1021,7 +1035,7 @@ function downloadFlatXLSX(rows: FlatRow[], fileName: string) {
       COLS.map(col => {
         const v = row[col.key];
         if (col.key === '_isSplit') return null;
-        if (v instanceof Date) return v;
+        if (v instanceof Date) return toExcelSerial(v);
         if (typeof v === 'number') return v;
         return fmt(v as Cell) || null;
       })
