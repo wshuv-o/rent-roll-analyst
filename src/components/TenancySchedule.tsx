@@ -504,15 +504,16 @@ async function downloadXLSX(
   const nM = MAIN_KEYS.length;
 
   // ── Group flat rows by tenant ─────────────────────────────────────────────
-  interface TG { base: FlatRow; rs: FlatRow[]; cs: FlatRow[] }
+  interface TG { base: FlatRow; rs: FlatRow[]; cs: FlatRow[]; other: FlatRow[] }
   const tMap = new Map<number, TG>();
   for (const row of rows) {
     const i = row._tenantIdx;
-    if (!tMap.has(i)) tMap.set(i, { base: row, rs: [], cs: [] });
+    if (!tMap.has(i)) tMap.set(i, { base: row, rs: [], cs: [], other: [] });
     const g = tMap.get(i)!;
     const sec = String(row._section ?? '').toLowerCase();
     if (sec.includes('rent') && sec.includes('step')) g.rs.push(row);
-    else if (row._section) g.cs.push(row);
+    else if (sec.includes('charge') && sec.includes('schedule')) g.cs.push(row);
+    else if (row._section) g.other.push(row);
   }
   const tenants = [...tMap.values()];
 
@@ -550,8 +551,8 @@ async function downloadXLSX(
 
   // Build a mapping from charge code → category using the (code, type) pair key
   const codeType: Record<string, string> = {};
-  for (const { rs, cs } of tenants) {
-    for (const r of [...rs, ...cs]) {
+  for (const { rs, cs, other } of tenants) {
+    for (const r of [...rs, ...cs, ...other]) {
       const c = String(r.charge ?? '').trim();
       if (c && !codeType[c]) codeType[c] = String(r.chargeType ?? '').trim();
     }
@@ -559,8 +560,8 @@ async function downloadXLSX(
   const codeCategory = (code: string): string =>
     mappings[pairKey(code, codeType[code] ?? '')] || '';
 
-  // Merge RS + filtered CS into one list per tenant (CS is superset, RS fills gaps)
-  const allRows = (t: TG): FlatRow[] => [...t.rs, ...filteredCS(t.base._tenantIdx, t.cs)];
+  // Merge RS + filtered CS + other sections into one list per tenant
+  const allRows = (t: TG): FlatRow[] => [...t.rs, ...filteredCS(t.base._tenantIdx, t.cs), ...t.other];
 
   // Parse rent roll date to sort value for range checks
   const rrDateNum = rentRollDate ? Date.parse(rentRollDate) : 0;
@@ -1167,7 +1168,7 @@ export function TenancyScheduleTable({ tenants, fileName, onBack, rentRollDate, 
       const c = String(row.charge ?? '').trim();
       if (!c) continue;
       if (sec.includes('rent') && sec.includes('step')) g.rsCodes.add(c);
-      else if (row._section) g.csCodes.add(c);
+      else if (sec.includes('charge') && sec.includes('schedule')) g.csCodes.add(c);
     }
     const warnings = new Map<number, string[]>();
     for (const [idx, { rsCodes, csCodes }] of byTenant.entries()) {

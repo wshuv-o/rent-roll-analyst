@@ -62,7 +62,7 @@ const KNOWN_MAPPINGS: Record<string, string> = {
 
 function autoSuggest(charge: string, chargeType: string, categories: string[]): string {
   // Normalise: lowercase, trim, strip leading "* "
-  const code = charge.toLowerCase().trim().replace(/^\*\s*/, '');
+  const code = charge.toLowerCase().trim().replace(/^\*+\s*/, '');
   const type = chargeType.toLowerCase().trim();
 
   // 1. Exact (code, type) lookup
