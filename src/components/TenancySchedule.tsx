@@ -673,9 +673,11 @@ async function downloadXLSX(
   const COL_SR = col++;
   const COL_VP = col++;
 
-  // Bump sections (one after another)
+  // Bump sections (with blank separator before each category)
   const bumpStarts: number[] = [];
+  const bumpSeparators: number[] = [];
   for (let ci = 0; ci < bumpCategories.length; ci++) {
+    if (ci > 0) bumpSeparators.push(col++); // blank col before each bump type (except first)
     bumpStarts.push(col);
     col += maxBumpsPerCat[ci] * 2;
   }
@@ -898,12 +900,12 @@ async function downloadXLSX(
   });
 
   // Column widths
-  const blankColSet = new Set([COL_B1, COL_B2]);
+  const blankColSet = new Set([COL_B1, COL_B2, ...bumpSeparators]);
   const isBlankCol = (i: number) => blankColSet.has(i);
 
   ws2.columns = Array.from({ length: TOTAL }, (_, i) => ({
     width: i === 0 ? 34
-         : isBlankCol(i) ? 2
+         : isBlankCol(i) ? 4
          : i < nM ? 16
          : 14,
   }));
@@ -959,7 +961,6 @@ async function downloadXLSX(
   const HDR_HEIGHTS = [22, 18, 18];
   const hdrs123 = [h1, h2, h3];
   hdrs123.forEach((hdr, hi) => {
-    const level = (hi + 1) as 1 | 2 | 3;
     const exRow = ws2.addRow(hdr as (string | number | Date | null)[]);
     exRow.height = HDR_HEIGHTS[hi];
     exRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
@@ -969,8 +970,7 @@ async function downloadXLSX(
         return;
       }
       cell.font = {
-        bold: true,
-        size: level === 1 ? 11 : 10,
+        size: 10,
         name: 'Calibri',
       };
       cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
@@ -981,14 +981,14 @@ async function downloadXLSX(
   const rrRow = ws2.getRow(2);
   const rrLabelCell = rrRow.getCell(3); // column C
   rrLabelCell.value = 'Rent Roll Date:';
-  rrLabelCell.font = { bold: true, size: 10, name: 'Calibri' };
+  rrLabelCell.font = { size: 10, name: 'Calibri' };
   const rrDateCell = rrRow.getCell(4); // column D
   if (rentRollDate) {
     const rrSerial = toExcelSerial(rentRollDate);
     rrDateCell.value = rrSerial;
     rrDateCell.numFmt = 'mm/dd/yyyy';
   }
-  rrDateCell.font = { bold: true, size: 10, name: 'Calibri' };
+  rrDateCell.font = { size: 10, name: 'Calibri' };
 
   // Row 4: column headers with per-section background colors
   const AT_BG = 'FF4F6228';   // rgb(79,98,40) — Annual Totals
@@ -1001,10 +1001,16 @@ async function downloadXLSX(
   const CC_FT = 'FFFFFF00';    // rgb(255,255,0) — yellow text for Current Charges
 
   const exHdrRow = ws2.addRow(h4 as (string | number | Date | null)[]);
-  exHdrRow.height = 16;
+  exHdrRow.height = 22;
   exHdrRow.eachCell({ includeEmpty: true }, (cell, colIdx) => {
     const ci = colIdx - 1;
     const section = colSection(ci);
+
+    // Blank separator columns: white background, skip other styling
+    if (isBlankCol(ci)) {
+      cell.fill = mkFill(PAL.white);
+      return;
+    }
 
     // Determine background and font color for row 4
     let bg: string;
@@ -1029,12 +1035,18 @@ async function downloadXLSX(
     }
 
     cell.fill = mkFill(bg);
-    cell.font = { bold: true, color: { argb: fontColor }, size: 10, name: 'Calibri' };
+    cell.font = { color: { argb: fontColor }, size: 10, name: 'Calibri' };
     cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: false };
   });
 
   // Build lookup of formula col → formula fn for quick access
   const formulaMap = new Map(formulaCols.map(fc => [fc.col, fc.formula]));
+
+  // Left-aligned columns: Property, Unit, Tenant, Lease Type
+  const leftAlignKeys = new Set<keyof FlatRow>(['property', 'unit', 'lease', 'leaseType']);
+  const leftAlignCols = new Set(
+    MAIN_KEYS.map((k, i) => leftAlignKeys.has(k) ? i : -1).filter(i => i >= 0)
+  );
 
   dataRows.forEach((dataRow, ri) => {
     const exRow = ws2.addRow(dataRow as (string | number | Date | null)[]);
@@ -1054,6 +1066,8 @@ async function downloadXLSX(
       const isFormula = formulaMap.has(ci);
       const isDateCol = dateMainCols.has(ci) || (ci >= nM && h4[ci] != null && String(h4[ci]).toLowerCase().includes('date'));
       const isVarPct = ci === COL_VP;
+      const isLeftAlign = leftAlignCols.has(ci);
+      const isCC = ccTotal > 0 && ci >= COL_CC && ci < COL_CC + ccTotal;
 
       if (isDateCol) {
         cell.numFmt = 'mm/dd/yyyy';
@@ -1061,11 +1075,14 @@ async function downloadXLSX(
       } else if (isVarPct) {
         cell.numFmt = '0.00%';
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
+      } else if (isCC) {
+        cell.numFmt = '#,##0';
+        cell.alignment = { vertical: 'middle', horizontal: 'right' };
       } else if (isFormula || typeof cell.value === 'number' || (cell.value && typeof cell.value === 'object' && 'formula' in cell.value)) {
-        cell.numFmt = '#,##0.00';
+        cell.numFmt = '$#,##0.00';
         cell.alignment = { vertical: 'middle', horizontal: 'right' };
       } else {
-        cell.alignment = { vertical: 'middle', horizontal: ci < nM ? 'left' : 'center' };
+        cell.alignment = { vertical: 'middle', horizontal: isLeftAlign ? 'left' : 'center' };
       }
     });
   });
