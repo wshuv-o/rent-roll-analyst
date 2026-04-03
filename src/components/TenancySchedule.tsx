@@ -1,6 +1,7 @@
 // src/components/TenancyScheduleTable.tsx
 import { useMemo, useState } from 'react';
 import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
+import type { TenancyHeaderMapping } from '@/hooks/useRentRollParser';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { MappingDialog, pairKey } from './MappingDialog';
@@ -152,8 +153,23 @@ function fmt(v: Cell): string {
 }
 
 function pick(mr: Record<string, Cell>, ...keys: string[]): Cell {
+  // 1. Exact match
   for (const k of keys) {
     if (mr[k] !== undefined && mr[k] !== null) return mr[k];
+  }
+  // 2. Fallback: case-insensitive — check if any mainRow key starts with
+  //    one of the requested keys (handles header row variations where the
+  //    merged label is longer/shorter than expected, e.g. "Security Deposit"
+  //    vs "Security Deposit Received").
+  const mrKeys = Object.keys(mr);
+  for (const k of keys) {
+    const lo = k.toLowerCase();
+    for (const mk of mrKeys) {
+      const mlo = mk.toLowerCase();
+      if ((mlo.startsWith(lo) || lo.startsWith(mlo)) && mr[mk] !== undefined && mr[mk] !== null) {
+        return mr[mk];
+      }
+    }
   }
   return null;
 }
@@ -301,9 +317,24 @@ interface TenantBase extends Omit<FlatRow,
   'annual' | 'annualPerArea' | 'managementFee' | 'annualGrossAmount'
 > {}
 
+/**
+ * Mapped pick: looks up a standard field using the AI mapping first,
+ * then falls back to the hardcoded label list.
+ */
+function mpick(
+  mr: Record<string, Cell>,
+  mapping: Record<string, string> | undefined,
+  standardField: string,
+  ...fallbacks: string[]
+): Cell {
+  const aiLabel = mapping?.[standardField];
+  return pick(mr, ...(aiLabel ? [aiLabel, ...fallbacks] : fallbacks));
+}
+
 function buildTenantBase(
   mr: Record<string, Cell>,
   idx: number,
+  mainMap?: Record<string, string>,
   overrides?: { unit: string; area: number | null; weight: number },
 ): TenantBase {
   const isSplit = !!overrides;
@@ -313,47 +344,49 @@ function buildTenantBase(
     const n = toNumber(v);
     return n !== null ? n * w : v;  // full float precision — no rounding
   };
+  const m = (std: string, ...fb: string[]) => mpick(mr, mainMap, std, ...fb);
 
   return {
     _tenantIdx:              idx,
     _isSplit:                isSplit,
-    property:                pick(mr, 'Property'),
-    unit:                    overrides ? overrides.unit : pick(mr, 'Unit(s)', 'Unit'),
-    lease:                   pick(mr, 'Lease'),
-    leaseType:               pick(mr, 'Lease Type'),
-    area:                    overrides ? (overrides.area ?? pick(mr, 'Area')) : pick(mr, 'Area'),
-    leaseFrom:               pick(mr, 'Lease From'),
-    leaseTo:                 pick(mr, 'Lease To'),
-    term:                    pick(mr, 'Term'),
-    tenancyYears:            pick(mr, 'Tenancy Years'),
-    monthlyRent:             wNum(pick(mr, 'Monthly Rent')),
-    monthlyRentPerArea:      pick(mr, 'Monthly Rent/Area'),    // rate → unchanged
-    annualRent:              wNum(pick(mr, 'Annual Rent')),
-    annualRentPerArea:       pick(mr, 'Annual Rent/Area'),     // rate → unchanged
-    annualRecPerArea:        pick(mr, 'Annual Rec./Area'),     // rate → unchanged
-    annualMiscPerArea:       pick(mr, 'Annual Misc/Area'),     // rate → unchanged
-    securityDepositReceived: wNum(pick(mr, 'Security Deposit Received')),
-    locAmount:               wNum(pick(mr, 'LOC Amount/ Bank Guarantee')),
+    property:                m('property', 'Property'),
+    unit:                    overrides ? overrides.unit : m('unit', 'Unit(s)', 'Unit'),
+    lease:                   m('lease', 'Lease'),
+    leaseType:               m('leaseType', 'Lease Type'),
+    area:                    overrides ? (overrides.area ?? m('area', 'Area')) : m('area', 'Area'),
+    leaseFrom:               m('leaseFrom', 'Lease From'),
+    leaseTo:                 m('leaseTo', 'Lease To'),
+    term:                    m('term', 'Term'),
+    tenancyYears:            m('tenancyYears', 'Tenancy Years'),
+    monthlyRent:             wNum(m('monthlyRent', 'Monthly Rent')),
+    monthlyRentPerArea:      m('monthlyRentPerArea', 'Monthly Rent/Area'),
+    annualRent:              wNum(m('annualRent', 'Annual Rent')),
+    annualRentPerArea:       m('annualRentPerArea', 'Annual Rent/Area'),
+    annualRecPerArea:        m('annualRecPerArea', 'Annual Rec./Area'),
+    annualMiscPerArea:       m('annualMiscPerArea', 'Annual Misc/Area'),
+    securityDepositReceived: wNum(m('securityDeposit', 'Security Deposit Received', 'Security Deposit')),
+    locAmount:               wNum(m('locAmount', 'LOC Amount/ Bank Guarantee', 'LOC Amount')),
   };
 }
 
-function buildScheduleRow(base: TenantBase, sectionName: string, v: SubValues): FlatRow {
+function buildScheduleRow(base: TenantBase, sectionName: string, v: SubValues, subMap?: Record<string, string>): FlatRow {
+  const m = (std: string, ...fb: string[]) => mpick(v, subMap, std, ...fb);
   return {
     ...base,
     _section:          sectionName,
-    charge:            v['Charge'] ?? null,
-    chargeType:        v['Type'] ?? null,
-    chargeUnit:        v['Unit'] ?? null,
-    areaLabel:         v['Area Label'] ?? null,
-    subArea:           v['Area'] ?? null,
-    from:              v['From'] ?? null,
-    to:                v['To'] ?? null,
-    monthlyAmt:        v['Monthly Amt'] ?? null,
-    amtPerArea:        v['Amt/Area'] ?? null,
-    annual:            v['Annual'] ?? null,
-    annualPerArea:     v['Annual/Area'] ?? null,
-    managementFee:     v['Management Fee'] ?? null,
-    annualGrossAmount: v['Annual Gross Amount'] ?? null,
+    charge:            m('charge', 'Charge'),
+    chargeType:        m('chargeType', 'Type'),
+    chargeUnit:        m('unit', 'Unit'),
+    areaLabel:         m('areaLabel', 'Area Label'),
+    subArea:           m('area', 'Area'),
+    from:              m('from', 'From'),
+    to:                m('to', 'To'),
+    monthlyAmt:        m('monthlyAmt', 'Monthly Amt'),
+    amtPerArea:        m('amtPerArea', 'Amt/Area'),
+    annual:            m('annual', 'Annual'),
+    annualPerArea:     m('annualPerArea', 'Annual/Area'),
+    managementFee:     m('managementFee', 'Management Fee'),
+    annualGrossAmount: m('annualGrossAmount', 'Annual Gross Amount'),
   };
 }
 
@@ -370,23 +403,25 @@ function emptyScheduleRow(base: TenantBase): FlatRow {
 
 // ─── Flatten ──────────────────────────────────────────────────────────────────
 
-function flatten(tenants: TenancyScheduleTenant[]): FlatRow[] {
+function flatten(tenants: TenancyScheduleTenant[], hm?: TenancyHeaderMapping): FlatRow[] {
   const rows: FlatRow[] = [];
   let idx = 0; // _tenantIdx — increments per emitted tenant or per-unit split
+  const mainMap = hm?.main;
+  const subMap  = hm?.sub;
 
   for (const t of tenants) {
     const analysis = analyseMultiUnit(t);
 
     // ── Single unit, or combined rows everywhere: no splitting ──
     if (!analysis.needsSplit) {
-      const base = buildTenantBase(t.mainRow, idx++);
+      const base = buildTenantBase(t.mainRow, idx++, mainMap);
       if (t.subSections.length === 0) {
         rows.push(emptyScheduleRow(base));
         continue;
       }
       for (const section of t.subSections) {
         for (const dataRow of section.rows) {
-          rows.push(buildScheduleRow(base, section.name, dataRow.values));
+          rows.push(buildScheduleRow(base, section.name, dataRow.values, subMap));
         }
       }
       continue;
@@ -402,7 +437,7 @@ function flatten(tenants: TenancyScheduleTenant[]): FlatRow[] {
         ? unitArea / analysis.totalArea
         : 1 / mainUnits.length;
 
-      const base = buildTenantBase(t.mainRow, idx++, { unit, area: unitArea, weight: mainWeight });
+      const base = buildTenantBase(t.mainRow, idx++, mainMap, { unit, area: unitArea, weight: mainWeight });
 
       if (t.subSections.length === 0) {
         rows.push(emptyScheduleRow(base));
@@ -415,12 +450,10 @@ function flatten(tenants: TenancyScheduleTenant[]): FlatRow[] {
 
           if (sameUnitSet(rowUnits, [unit])) {
             // Exact match → include as-is
-            rows.push(buildScheduleRow(base, section.name, dataRow.values));
+            rows.push(buildScheduleRow(base, section.name, dataRow.values, subMap));
 
           } else if (rowUnits.length > 1 && rowUnits.includes(unit)) {
             // Combined row (e.g. "A0105, A102") → split this row by area weight.
-            // Use the area of the units actually referenced in THIS row, not all main units,
-            // so partial-combination rows are weighted correctly.
             const combinedArea = rowUnits.reduce(
               (sum, u) => sum + (areaMap[u] ?? 0), 0,
             );
@@ -431,7 +464,7 @@ function flatten(tenants: TenancyScheduleTenant[]): FlatRow[] {
             const weightedValues = splitSubValues(
               dataRow.values, unit, unitArea, combinedWeight,
             );
-            rows.push(buildScheduleRow(base, section.name, weightedValues));
+            rows.push(buildScheduleRow(base, section.name, weightedValues, subMap));
 
           }
           // Belongs to a different single unit → skip
@@ -1131,14 +1164,15 @@ function downloadFlatXLSX(rows: FlatRow[], fileName: string) {
 
 interface Props {
   tenants: TenancyScheduleTenant[];
+  headerMapping?: TenancyHeaderMapping;
   fileName: string;
   onBack: () => void;
   rentRollDate: string;
   onRentRollDateChange: (date: string) => void;
 }
 
-export function TenancyScheduleTable({ tenants, fileName, onBack, rentRollDate, onRentRollDateChange }: Props) {
-  const rows = useMemo(() => flatten(tenants), [tenants]);
+export function TenancyScheduleTable({ tenants, headerMapping, fileName, onBack, rentRollDate, onRentRollDateChange }: Props) {
+  const rows = useMemo(() => flatten(tenants, headerMapping), [tenants, headerMapping]);
 
   // Unique (charge, chargeType) pairs for the mapping dialog, sorted by Lease Type then Code
   const uniquePairs = useMemo<UniqueChargePair[]>(() => {

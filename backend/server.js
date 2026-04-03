@@ -20,7 +20,7 @@ app.use(express.json());
 app.use(cors({
   origin: ["https://lineitems.bulkscraper.cloud", "https://clickycube.lovable.app","https://rent-roll-oracle.lovable.app"],
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 const openai = new OpenAI({
@@ -767,52 +767,69 @@ app.get('/api/debug/vector-test', async (req, res) => {
 // ────────────────────────────────────────────────
 const RENT_ROLL_MODEL = 'gpt-4o-mini';
 
-const RENT_ROLL_SYSTEM_PROMPT = `You are a rent roll spreadsheet parser. Given an anonymized HTML sample of an Excel rent roll, output ONLY a JSON instruction object. Be concise — no lengthy explanations.
-
-Brief analysis then JSON. Use these sections:
+const RENT_ROLL_SYSTEM_PROMPT = `You are a rent roll spreadsheet parser. Given an anonymized HTML table of an Excel rent roll, analyze the structure and output a JSON parsing instruction.
 
 [THINKING]
-One-liner per observation: identify header row(s), metadata rows, data start row.
+Briefly identify: header row(s), data start row, the suite/unit/space ID column (the most critical anchor), and the overall layout.
 
-[GROUPING]  
-One-liner: how new tenants start (e.g. "suite_id column non-empty"), what continuation rows look like, what to skip.
+[GROUPING]
+Briefly describe: how new tenants start, what continuation rows look like (rows with no suite ID that belong to the same tenant), what rows to skip. Note any column groups visible from merged/parent headers.
 
 [PARSING INSTRUCTION]
 \`\`\`json
 {
   "header_rows": [],
   "data_starts_at_row": null,
-  "column_map": {
-    "suite_id": "",
-    "tenant_name": "",
-    "lease_start": "",
-    "lease_end": "",
-    "gla_sqft": "",
-    "code":"",
-    "monthly_base_rent": "",
-    "base_rent_psf": "",
-    "recurring_charge_code": "",
-    "recurring_charge_amount": "",
-    "recurring_charge_psf": "",
-    "future_rent_code": "",
-    "future_rent_date": "",
-    "future_rent_amount": "",
-    "future_rent_psf": ""
-  },
-  "new_tenant_rule": "",
+  "suite_id_col": "",
+  "tenant_name_col": "",
+  "scalar_fields": [
+    { "field_id": "lease_start", "col": "C", "label": "Lease Commencement" },
+    { "field_id": "lease_end",   "col": "D", "label": "Lease Expiration" },
+    { "field_id": "gla_sqft",   "col": "E", "label": "NRA (SF)" }
+  ],
+  "groups": [
+    {
+      "id": "base_rent",
+      "label": "Base Rent",
+      "collection": false,
+      "columns": [
+        { "col": "F", "label": "Monthly" },
+        { "col": "G", "label": "PSF" }
+      ]
+    },
+    {
+      "id": "current_charges",
+      "label": "Current Charges",
+      "collection": true,
+      "columns": [
+        { "col": "H", "label": "Code" },
+        { "col": "I", "label": "Amount" },
+        { "col": "J", "label": "PSF" }
+      ]
+    }
+  ],
   "skip_row_patterns": [],
-  "addon_space_patterns": [],
-  "confidence": "high | medium | low",
+  "new_tenant_rule": "suite_id column non-empty",
+  "confidence": "high",
   "notes": ""
 }
 \`\`\`
 
-Note: Some columns may be grouped under a shared parent header (e.g. "Base Rent" spanning Monthly and PSF sub-columns). Account for merged/grouped headers when mapping columns.
+Rules:
+- suite_id_col is REQUIRED — identify the column with the unique tenant space identifier (suite #, unit #, space #, bay #, parcel #, etc.). This is the most important field.
+- scalar_fields: every column that has exactly one value per tenant. Use descriptive field_ids. Common known slugs: lease_start, lease_end, gla_sqft, sign_date, lease_term, occupancy_date, option_date, occupancy_status, floor, building, property_name. For unrecognized fields, create a descriptive snake_case id (e.g. "cam_start", "renewal_option").
+- groups: columns that naturally belong together, discovered from the actual header structure — do NOT use a fixed/predefined list of groups.
+  - Look for parent headers that span multiple sub-columns (e.g. a merged "Current Charges" cell above "Code", "Amount", "PSF"). Each such parent is a group.
+  - collection: true when the group's columns appear on multiple continuation rows for one tenant (e.g. multiple charge lines, multiple rent escalation steps).
+  - collection: false when the group has only one row of data per tenant (e.g. "Base Rent" with Monthly + PSF sub-columns side by side).
+  - Discover as many groups as exist in the data — there is no limit.
+- skip_row_patterns: regex patterns to skip total/subtotal/blank separator rows (e.g. "(?i)\\btotal\\b", "^\\s*$").
+- Only include columns that actually exist in the data. Use "" for suite_id_col/tenant_name_col if not confidently identified.
 
 [FLAGS]
-Only list genuine ambiguities. If none, say "None."
+List genuine ambiguities only. If none, say "None."
 
-IMPORTANT: Keep text minimal. The JSON is what matters.`;
+IMPORTANT: Keep text minimal — the JSON is what matters.`;
 
 function estimateGeminiCost(model, promptTokens, completionTokens) {
   const rates = {

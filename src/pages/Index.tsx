@@ -19,7 +19,7 @@ const Index = () => {
     columnAliases, customGroups, sentSampleHtml,
     sampleRows, sampleCols, maxAvailableCols, totalRows,
     setSampleRows, setSampleCols,
-    selectedRentRollType, tenancyScheduleTenants, mallRentRollTenants,
+    selectedRentRollType, tenancyScheduleTenants, tenancyHeaderMapping, mallRentRollTenants,
     rentRollDate, setRentRollDate,
     loadFile, sendSampleToAI, confirmRentRollType,
     handleColumnAssign, handleCustomFieldAssign, handleGroupResize,
@@ -153,6 +153,7 @@ const Index = () => {
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               <TenancyScheduleTable
                 tenants={tenancyScheduleTenants}
+                headerMapping={tenancyHeaderMapping}
                 fileName={fileName}
                 onBack={goBackToConfirm}
                 rentRollDate={rentRollDate}

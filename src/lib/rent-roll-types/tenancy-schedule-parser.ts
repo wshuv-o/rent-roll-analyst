@@ -93,6 +93,15 @@ export interface TenancyScheduleTenant {
   rawRows: (string | number | Date | null)[][];
 }
 
+/** Result object returned by parseTenancySchedule */
+export interface TenancyScheduleResult {
+  tenants: TenancyScheduleTenant[];
+  /** Merged main header labels (e.g. "Property", "Unit(s)", "Monthly Rent/Area") */
+  mainHeaders: string[];
+  /** Union of all sub-section column labels found across all tenants */
+  subHeaders: string[];
+}
+
 // ─── Internal row kinds ───────────────────────────────────────────────────────
 
 type RowKind =
@@ -243,7 +252,7 @@ function classifyRow(row: Row | undefined, rowIndex: number, headerEndRow: numbe
 export function parseTenancySchedule(
   data: Row[],
   addLog?: (type: 'system' | 'flag', msg: string) => void,
-): TenancyScheduleTenant[] {
+): TenancyScheduleResult {
   const log = addLog ?? (() => {});
 
   // ── 1. Detect headers ──────────────────────────────────────────────────────
@@ -251,7 +260,7 @@ export function parseTenancySchedule(
 
   if (mainHeaders.length === 0) {
     log('flag', 'Tenancy Schedule: could not detect header rows. Is col A of the header row "Property"?');
-    return [];
+    return { tenants: [], mainHeaders: [], subHeaders: [] };
   }
 
   const namedHeaders = mainHeaders.filter(l => l);
@@ -371,5 +380,18 @@ export function parseTenancySchedule(
     log('system', `Sub-section types found: ${[...subSectionNames].join(', ')}.`);
   }
 
-  return tenants;
+  // Collect unique sub-section column labels across all tenants
+  const subHeaderSet = new Set<string>();
+  for (const t of tenants) {
+    for (const s of t.subSections) {
+      for (const label of s.columnLabels) {
+        if (label) subHeaderSet.add(label);
+      }
+    }
+  }
+
+  // Filter main headers to non-empty labels
+  const namedMainHeaders = mainHeaders.filter(l => l);
+
+  return { tenants, mainHeaders: namedMainHeaders, subHeaders: [...subHeaderSet] };
 }

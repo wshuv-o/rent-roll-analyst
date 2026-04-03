@@ -9,13 +9,41 @@ import { parseSheet } from '@/lib/parser';
 import { streamAnalysis } from '@/lib/ai-stream';
 import { indexToColLetter, colLetterToIndex } from '@/lib/col-utils';
 import { parseTenancySchedule } from '@/lib/rent-roll-types/tenancy-schedule-parser';
-import type { TenancyScheduleTenant } from '@/lib/rent-roll-types/tenancy-schedule-parser';
+import type { TenancyScheduleTenant, TenancyScheduleResult } from '@/lib/rent-roll-types/tenancy-schedule-parser';
 import { parseMallRentRoll } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 import type { MallRentRollTenant } from '@/lib/rent-roll-types/mall-rent-roll-parser';
 
 let logIdCounter = 0;
 
 const colLetterToIdx = colLetterToIndex;
+
+// ─── Tenancy header mapping types & fetcher ──────────────────────────────────
+
+export interface TenancyHeaderMapping {
+  main: Record<string, string>;  // standardField → detectedLabel
+  sub:  Record<string, string>;  // standardField → detectedLabel
+}
+
+const MAP_HEADERS_URL = `${import.meta.env.VITE_API_BASE_URL}/api/map-tenancy-headers`;
+
+async function fetchTenancyHeaderMapping(
+  mainHeaders: string[],
+  subHeaders: string[],
+): Promise<TenancyHeaderMapping> {
+  const resp = await fetch(MAP_HEADERS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${import.meta.env.VITE_API_KEY}`,
+    },
+    body: JSON.stringify({ mainHeaders, subHeaders }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(err.error ?? `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
 
 // Derive group spans from instruction's column_map
 function deriveGroupSpans(instruction: ParsingInstruction): GroupSpan[] {
@@ -88,6 +116,8 @@ export function useRentRollParser() {
 
   // Rich tenancy-schedule result (kept separate from the downcast TenantObject[])
   const [tenancyScheduleTenants, setTenancyScheduleTenants] = useState<TenancyScheduleTenant[]>([]);
+  // AI-mapped header labels for tenancy schedule
+  const [tenancyHeaderMapping, setTenancyHeaderMapping] = useState<TenancyHeaderMapping>({ main: {}, sub: {} });
   // Rich mall-rent-roll result
   const [mallRentRollTenants, setMallRentRollTenants] = useState<MallRentRollTenant[]>([]);
   // Rent roll date (user-provided, used for current-charges calculation in tenancy schedule export)
@@ -155,7 +185,7 @@ export function useRentRollParser() {
   }, [addLog]);
 
   // Step 1b: User selects rent roll type → branch by type
-  const confirmRentRollType = useCallback((typeId: string) => {
+  const confirmRentRollType = useCallback(async (typeId: string) => {
     setSelectedRentRollType(typeId);
 
     if (typeId === 'tenancy-schedule') {
@@ -164,31 +194,42 @@ export function useRentRollParser() {
       setIsProcessing(true);
 
       const data = sheetDataRef.current;
-      const result = parseTenancySchedule(data, addLog);
-      setTenancyScheduleTenants(result);
+      const parsed = parseTenancySchedule(data, addLog);
+      setTenancyScheduleTenants(parsed.tenants);
+
+      // Ask AI to map detected headers to standard fields
+      addLog('system', 'Sending detected headers to AI for column mapping...');
+      let headerMapping: TenancyHeaderMapping = { main: {}, sub: {} };
+      try {
+        headerMapping = await fetchTenancyHeaderMapping(
+          parsed.mainHeaders,
+          parsed.subHeaders,
+        );
+        setTenancyHeaderMapping(headerMapping);
+        addLog('system', `AI mapped ${Object.keys(headerMapping.main).length} main fields and ${Object.keys(headerMapping.sub).length} sub-section fields.`);
+      } catch (err) {
+        addLog('flag', `AI header mapping failed: ${err instanceof Error ? err.message : String(err)}. Using fuzzy fallback.`);
+      }
 
       // Convert to TenantObject[] for the existing TenantTable display.
-      //
-      // Main row keys come directly from the merged column headers detected in the
-      // sheet (e.g. "Property", "Unit(s)", "Lease"). We look them up by those exact
-      // names so we never accidentally key into mr[''] and get undefined.
-      //
-      // Known header labels from this format (Book2.xlsx / Tenancy Schedule I):
-      //   "Property" → building address
-      //   "Unit(s)"  → unit number  → suite_id
-      //   "Lease"    → tenant name  → tenant_name
-      const converted: TenantObject[] = result.map(t => {
+      // Use AI mapping for unit/lease lookup, with fuzzy fallback.
+      const converted: TenantObject[] = parsed.tenants.map(t => {
         const mr = t.mainRow;
 
-        // Look up unit value: prefer exact known key, then broad fallback
+        const unitKey = headerMapping.main['unit'];
+        const leaseKey = headerMapping.main['lease'];
+
+        // Look up unit value: AI-mapped key → exact known keys → broad fallback
         const unitVal =
+          (unitKey ? mr[unitKey] : null) ??
           mr['Unit(s)'] ??
           mr['Unit'] ??
           Object.entries(mr).find(([k]) => /\bunit\b/i.test(k))?.[1] ??
           null;
 
-        // Look up lease/tenant value: avoid "Lease Type", "Lease From", "Lease To", "Term"
+        // Look up lease/tenant value: AI-mapped key → exact → broad fallback
         const leaseVal =
+          (leaseKey ? mr[leaseKey] : null) ??
           mr['Lease'] ??
           Object.entries(mr).find(
             ([k]) => /\blease\b/i.test(k) && !/type|from|to|term/i.test(k)
@@ -515,6 +556,7 @@ export function useRentRollParser() {
     // Rich tenancy-schedule result (sub-sections, typed values) — use this
     // anywhere TenantObject[] is not enough (e.g. a dedicated schedule view).
     tenancyScheduleTenants,
+    tenancyHeaderMapping,
     mallRentRollTenants,
     rentRollDate, setRentRollDate,
     loadFile, sendSampleToAI, confirmRentRollType,
